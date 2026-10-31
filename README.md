@@ -21,10 +21,9 @@
 - [1. O projekcie isoVT](#-1-o-projekcie-isovt)
 - [2. Architektura Systemu](#-2-architektura-systemu)
 - [3. Wymagania Sprzętowe i Instalacja Sterowników](#-3-wymagania-sprzętowe-i-instalacja-sterowników)
-  - [A. Adaptery PEAK PCAN-USB](#a-adaptery-peak-pcan-usb-rekomendowane)
-  - [B. Mikrokontrolery ESP32 / Arduino](#b-mikrokontrolery-esp32--arduino-sterowniki-maszyn)
-  - [C. Tryb Wirtualny (Virtual CAN)](#c-tryb-wirtualny-virtual-can)
-  - [D. Biblioteki Microsoft Visual C++](#d-biblioteki-uruchomieniowe-visual-c)
+  - [A. Adaptery PEAK PCAN-USB (Zalecane)](#a-adaptery-peak-pcan-usb-zalecane)
+  - [B. Tryb Wirtualny (Virtual CAN)](#b-tryb-wirtualny-virtual-can)
+  - [C. Biblioteki Microsoft Visual C++](#c-biblioteki-uruchomieniowe-visual-c)
 - [4. Szybki Start i Uruchomienie](#-4-szybki-start-i-uruchomienie)
   - [Krok 1: Pobranie paczki All-in-One](#krok-1-pobranie-paczki-all-in-one)
   - [Krok 2: Uruchomienie środowiska](#krok-2-uruchomienie-środowiska)
@@ -81,7 +80,7 @@ Projekt stanowi gotowy pomost łączący dowolną maszynę ISOBUS (opryskiwacze 
 
 Aby połączyć terminal **isoVT** z fizyczną maszyną rolniczą na magistrali CAN, upewnij się, że posiadasz odpowiedni adapter i zainstalowane sterowniki.
 
-### A. Adaptery PEAK PCAN-USB (Rekomendowane) ⭐⭐⭐
+### A. Adaptery PEAK PCAN-USB (Zalecane) ⭐⭐⭐
 Interfejsy firmy **PEAK-System** (PCAN-USB, PCAN-USB FD, PCAN-USB Pro) to branżowy standard diagnostyki i komunikacji ISOBUS.
 
 1. **Pobierz oficjalny instalator sterowników:**
@@ -99,26 +98,13 @@ Interfejsy firmy **PEAK-System** (PCAN-USB, PCAN-USB FD, PCAN-USB Pro) to branż
 
 ---
 
-### B. Mikrokontrolery ESP32 / Arduino (Sterowniki Maszyn)
-Jeśli budujesz własny sterownik maszyny ISOBUS (np. na bazie ESP32 i transceivera CAN SN65HVD230):
-
-1. **Sterowniki USB-UART dla płytki ESP32:**
-   - Dla płytek z układem CH340 / CH341: [Sterownik CH341SER WCH](http://www.wch-ic.com/downloads/CH341SER_EXE.html)
-   - Dla płytek z układem CP2102 / CP2104: [Sterownik Silicon Labs CP210x](https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers)
-2. **Schemat podłączenia transceivera:**
-   - ESP32 GPIO 21 (CAN TX) -> Transceiver CAN TXD
-   - ESP32 GPIO 22 (CAN RX) -> Transceiver CAN RXD
-   - Transceiver CAN_H / CAN_L -> Magistrala ISOBUS (z rezystorem terminującym 120 Ω)
-
----
-
-### C. Tryb Wirtualny (Virtual CAN)
+### B. Tryb Wirtualny (Virtual CAN)
 Nie masz jeszcze fizycznego adaptera CAN?  
 Terminal **isoVT** posiada wbudowany symulator magistrali CAN w pamięci RAM. Wystarczy w oknie konfiguracji (`F2` lub menu *Hardware -> Connect Virtual CAN*) wybrać tryb wirtualny, aby testować kontrolę sekcji i mostek AgOpenGPS bezpośrednio na biurku.
 
 ---
 
-### D. Biblioteki Uruchomieniowe Visual C++
+### C. Biblioteki Uruchomieniowe Visual C++
 Do paczki All-in-One dołączono wszystkie niezbędne pliki uruchomieniowe (`msvcp140.dll`, `vcruntime140.dll`). Gdyby jednak na bardzo świeżym systemie Windows program zgłaszał brak składników C++, zainstaluj oficjalny pakiet Microsoftu:
 - [Visual C++ 2015-2022 Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe)
 

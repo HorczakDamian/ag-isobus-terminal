@@ -19,17 +19,7 @@ e) Biblioteka programistyczna 'PCANBasic.dll' jest JUŻ DOŁĄCZONA bezpośredni
    do folderu z programem isoVT, więc terminal natychmiast wykryje adapter!
 
 
-2. DLA MIKROKONTROLERÓW ESP32 / ARDUINO (Własne sterowniki maszyn ISOBUS):
---------------------------------------------------------------------------
-Jeśli testujesz isoVT z własnym mikrokontrolerem (np. ESP32 z transceiverem SN65HVD230):
-a) Podłącz ESP32 kablem USB do komputera.
-b) W zależności od użytej płytki potrzebujesz standardowych sterowników konwertera USB-UART:
-   - CH340 / CH341: http://www.wch-ic.com/downloads/CH341SER_EXE.html
-   - CP2102: https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers
-c) Magistrala ISOBUS standardowo pracuje z prędkością: 250 kbps (250000 baud).
-
-
-3. PAKIET VISUAL C++ REDISTRIBUTABLE (Dla czystych instalacji Windows 10/11):
+2. PAKIET VISUAL C++ REDISTRIBUTABLE (Dla czystych instalacji Windows 10/11):
 ----------------------------------------------------------------------------
 Pliki bibliotek uruchomieniowych (msvcp140.dll, vcruntime140.dll) zostały
 dołączone bezpośrednio do tego pakietu. Gdyby jednak na bardzo starym systemie
