@@ -1,15 +1,15 @@
-# 🌾 AG-ISOBUS PRO — Precision Ag Universal Terminal & Task Controller
+# 🚜 isoVT — Precision Ag Virtual Terminal & AgOpenGPS Task Controller
 
 <div align="center">
 
-![C++17](https://img.shields.io/badge/Language-C%2B%2B17-00599C?style=for-the-badge&logo=c%2B%2B)
-![ISO 11783](https://img.shields.io/badge/Standard-ISO_11783--6_%2F_ISO_11783--10-2ea44f?style=for-the-badge)
-![DirectX 11](https://img.shields.io/badge/Render-DirectX_11_%2F_Dear_ImGui-orange?style=for-the-badge)
-![Platform](https://img.shields.io/badge/Platform-Windows_10_%2F_11_x64-blue?style=for-the-badge&logo=windows)
-![Release](https://img.shields.io/badge/Release-v1.0.0-success?style=for-the-badge)
+![C++17](https://img.shields.io/badge/C%2B%2B-17-00599C?style=for-the-badge&logo=c%2B%2B)
+![ISO 11783](https://img.shields.io/badge/ISO%2011783-VT%20%7C%20TC--SC%20%7C%20AUX--N-2ea44f?style=for-the-badge)
+![DirectX 11](https://img.shields.io/badge/Render-DirectX%2011-orange?style=for-the-badge)
+![Platform](https://img.shields.io/badge/Platform-Windows%20x64-blue?style=for-the-badge&logo=windows)
+![Build](https://img.shields.io/badge/Build-Nightbuild-purple?style=for-the-badge)
 ![License](https://img.shields.io/badge/License-MIT-lightgrey?style=for-the-badge)
 
-**Komercyjnej klasy wirtualny terminal rolniczy (ISOBUS Virtual Terminal) zintegrowany z kontrolerem zadań (Task Controller) dla AgOpenGPS.**
+**Nowoczesny, komercyjnej klasy Wirtualny Terminal ISOBUS (ISO 11783-6) zintegrowany z Kontrolerem Zadań i Kontrolą Sekcji dla AgOpenGPS.**
 
 *System Architecture & Precision Ag Engineering by **D. Horczak***
 
@@ -19,53 +19,54 @@
 
 ## 📌 Spis treści
 - [O projekcie](#-o-projekcie)
-- [Architektura Systemu](#-architektura-systemu)
+- [Architektura isoVT](#-architektura-isovt)
 - [Główne Funkcjonalności](#-główne-funkcjonalności)
-  - [1. ISO 11783-6 Virtual Terminal Server (VT/UT)](#1-iso-11783-6-virtual-terminal-server-vtut)
-  - [2. Kontroler Zadań AgOpenGPS (TC-SC & TC-BAS)](#2-kontroler-zadań-agopengps-tc-sc--tc-bas)
+  - [1. isoVT Server (ISO 11783-6)](#1-isovt-server-iso-11783-6)
+  - [2. Kontroler Zadań AgOpenGPS (TC-SC & TECU)](#2-kontroler-zadań-agopengps-tc-sc--tecu)
   - [3. Obsługa Wielu Maszyn (Multi-Working Set & Mini-Views)](#3-obsługa-wielu-maszyn-multi-working-set--mini-views)
   - [4. Dźwiękowy System Alarmów (ISO 11783-6 Audio Beeper)](#4-dźwiękowy-system-alarmów-iso-11783-6-audio-beeper)
   - [5. Pływająca Nakładka Dokowalna (HUD Overlay F11)](#5-pływająca-nakładka-dokowalna-hud-overlay-f11)
-  - [6. Wejścia AUX-N i Joysticki](#6-wejścia-aux-n-i-joysticki)
-- [Pobieranie i Gotowe Wydanie (Release v1.0.0)](#-pobieranie-i-gotowe-wydanie-release-v100)
+  - [6. Wejścia AUX-N & Joysticki](#6-wejścia-aux-n--joysticki)
+- [Szybki Start & Pobieranie (Nightbuild)](#-szybki-start--pobieranie-nightbuild)
 - [Budowanie ze Źródeł (CMake)](#-budowanie-ze-źródeł-cmake)
-- [Konfiguracja z AgOpenGPS](#-konfiguracja-z-agopengps)
-- [Klawiszologia i Skróty](#-klawiszologia-i-skróty)
+- [Uruchomienie z AgOpenGPS](#-uruchomienie-z-agopengps)
+- [Klawisze i Skróty](#-klawisze-i-skróty)
 - [Wspierany Sprzęt CAN](#-wspierany-sprzęt-can)
-- [Licencja & Informacje Prawne](#-licencja--informacje-prawne)
+- [Licencja & Autor](#-licencja--autor)
 
 ---
 
 ## 📖 O projekcie
 
-**AG-ISOBUS PRO** to nowoczesna, wysoce zoptymalizowana stacja dokująca i wirtualny terminal rolniczy (Virtual Terminal) pracujący w standardzie **ISO 11783 (ISOBUS)**. 
+**isoVT** to wysokowydajny, niezależny Wirtualny Terminal ISOBUS (**Universal Terminal / Virtual Terminal Server**) pracujący pod kontrolą silnika graficznego **DirectX 11** i **Dear ImGui**.
 
-Aplikacja łączy w sobie pełny terminal graficzny dla maszyn rolniczych (opryskiwacze, siewniki, rozsiewacze nawozów, prasy) z dwukierunkowym mostkiem kontrolera zadań dla otwartego systemu nawigacji rolniczej **AgOpenGPS**. Dzięki akceleracji sprzętowej **DirectX 11** terminal zapewnia płynne odświeżanie maski obiektów w 60 FPS, dotykowy interfejs kabinowy oraz bezstratne skalowanie wektorowe.
+Projekt został zaprojektowany z myślą o rolnictwie precyzyjnym — stanowi bezpośredni pomost między maszynami ISOBUS (siewniki, opryskiwacze, rozsiewacze, prasy) a popularnym systemem nawigacji rolniczej **AgOpenGPS**. Dzięki bezpośredniej wymianie danych UDP terminal realizuje automatyczną kontrolę sekcji roboczych (**Section Control**) oraz przekazuje rzeczywistą prędkość ciągnika z anteny GPS (**TECU**) prosto na magistralę CAN.
 
 ---
 
-## 🏛 Architektura Systemu
+## 🏛 Architektura isoVT
 
 ```text
  ┌────────────────────────────────────────────────────────┐
- │                      AG-ISOBUS PRO                     │
- │      DirectX 11 & Dear ImGui Engine (D. Horczak)       │
+ │                         isoVT                          │
+ │         DirectX 11 Core Engine (by D. Horczak)         │
  └──────────────────────────┬─────────────────────────────┘
                             │
        ┌────────────────────┴────────────────────┐
        ▼                                         ▼
 ┌───────────────────────────────┐     ┌───────────────────────────────┐
-│     ISO 11783-6 VT Server     │     │    ISO 11783-10 Task Control  │
-│  - Object Pool Fast Boot (2ms)│     │  - Section Control (do 64 sek)│
-│  - Multi-Working Set & Mini-VW│     │  - TECU GPS Speed Injection   │
-│  - Acoustic Alarm Beeper      │     │  - Variable Rate (TC-GEO)     │
-│  - AUX-N Joystick Mapper      │     │  - UDP Bridge (Port 8888/9999)│
+│       isoVT Server Core       │     │    AgOpenGPS Task Controller  │
+│  - ISO 11783-6 Parser & VT    │     │  - Section Control (do 64 sek)│
+│  - Fast-Boot IOP Cache (2ms)  │     │  - Wirtualne TECU (GPS Speed) │
+│  - Multi-Working Set & MiniVW │     │  - Variable Rate (TC-GEO)     │
+│  - ISO Audio Beeper Thread    │     │  - Pętla UDP (Port 8888/9999) │
+│  - AUX-N Joystick Mapping     │     │                               │
 └──────────────┬────────────────┘     └──────────────┬────────────────┘
                │                                     │
                ▼                                     ▼
       ┌─────────────────┐                   ┌─────────────────┐
       │  Magistrala CAN │                   │    AgOpenGPS    │
-      │  (PCAN / ESP32) │                   │  (Nawigacja GPS)│
+      │ (PEAK / ESP32)  │                   │  (Nawigacja GPS)│
       └─────────────────┘                   └─────────────────┘
 ```
 
@@ -73,46 +74,44 @@ Aplikacja łączy w sobie pełny terminal graficzny dla maszyn rolniczych (oprys
 
 ## 🌾 Główne Funkcjonalności
 
-### 1. ISO 11783-6 Virtual Terminal Server (VT/UT)
-- **Kompletny parser i renderer obiektów ISOBUS:** Kontenery, przyciski aktywne, pola wejściowe/wyjściowe tekstowe i liczbowe, wskaźniki wskazówkowe (Meters), paski postępu, wielokąty, łuki, elipsy, bitmapy i palety kolorów ISO.
-- **Fast-Boot IOP Cache:** Automatyczny zrzut i ładowanie puli obiektów (`.iop`) z dysku. Kolejne uruchomienie podłączonej maszyny następuje w ułamku sekundy bez konieczności retransmisji CAN ETP.
-- **Wielojęzyczność:** Zgodność ze standardem komend językowych ISO 11783-7.
-- **Wirtualne Klawiatury:** Wbudowane klawiatury numeryczne i alfanumeryczne dostosowane do ekranów dotykowych w ciągnikach.
+### 1. isoVT Server (ISO 11783-6)
+- **Kompletna obsługa obiektów ISOBUS:** Kontenery, przyciski aktywne, pola tekstowe i liczbowe, wskaźniki analogowe (Meters), paski postępu, łuki, elipsy, bitmapy i palety barw ISO.
+- **Fast-Boot IOP Cache:** Automatyczny zapis oraz natychmiastowe ładowanie puli obiektów (`.iop`) z dysku w zaledwie ~2 ms.
+- **Dynamiczne skalowanie:** Tryb dopasowania do rozdzielczości ekranu w kabinie (100%, 125%, 150%, Auto-Fit).
+- **Dotykowy interfejs:** Wbudowana klawiatura numeryczna oraz alfanumeryczna dla ekranów dotykowych w ciągnikach.
 
-### 2. Kontroler Zadań AgOpenGPS (TC-SC & TC-BAS)
+### 2. Kontroler Zadań AgOpenGPS (TC-SC & TECU)
 - **Automatyczna Kontrola Sekcji (Section Control):** Obsługa do 64 sekcji roboczych. Wyłączanie poszczególnych sekcji na nakładkach oraz granicach pola wyznaczonych w AgOpenGPS.
-- **Wirtualne TECU (Tractor ECU):** Przesyłanie rzeczywistej prędkości ciągnika z anteny GPS (PGN 0xFE48 / 0xFE49) bezpośrednio na magistralę ISOBUS do dawkowania nawozu lub nasion.
-- **Płynna synchronizacja UDP:** Zero opóźnień komunikacji między AgIO a terminalem.
+- **Wirtualne TECU (Tractor ECU):** Przesyłanie prędkości ciągnika z GPS (PGN `0xFE48` / `0xFE49`) do maszyn na magistrali CAN.
+- **Płynna synchronizacja UDP:** Błyskawiczna komunikacja bez lagów z AgIO (nasłuch `8888`, nadawanie `9999`).
 
 ### 3. Obsługa Wielu Maszyn (Multi-Working Set & Mini-Views)
-- Równoczesna praca wielu sterowników implementów podłączonych do jednego ciągnika (np. przedni zbiornik nawozowy + tylny siewnik precyzyjny).
-- Pasek szybkiego wyboru maszyny w nagłówku.
-- **Mini-Views (Picture-in-Picture):** Pływające kafelki podglądu dające podgląd na żywo na stan maszyn działających w tle z możliwością natychmiastowego przełączenia jednym kliknięciem.
+- Równoczesna praca kilku sterowników ISOBUS (np. przedni zbiornik + tylny siewnik).
+- **Mini-Views:** Pływające kafelki z podglądem na żywo ekranów maszyn działających w tle z możliwością natychmiastowego przełączenia jednym kliknięciem.
 
 ### 4. Dźwiękowy System Alarmów (ISO 11783-6 Audio Beeper)
-- Dedykowany, bezblokujący wątek akustyczny.
-- Dźwięki kliknięcia dotyku (TouchClick 2400 Hz) oraz klawiszy bocznych (SoftKeyClick 2100 Hz).
-- Akustyczne potrójne impulsy alarmowe ISO (980 Hz) ponawiane cyklicznie co 1.5 sekundy aż do potwierdzenia przyciskiem **ACK**.
+- Dedykowany, bezblokujący wątek akustyczny (brak przycięć klatek animacji).
+- Dźwięki dotyku ekranu (`TouchClick` 2400 Hz) oraz klawiszy funkcyjnych (`SoftKeyClick` 2100 Hz).
+- Akustyczne potrójne impulsy alarmowe ISO (980 Hz) ponawiane cyklicznie co 1.5 sekundy aż do wciśnięcia przycisku **ACK**.
 
 ### 5. Pływająca Nakładka Dokowalna (HUD Overlay F11)
-- Klawisz **F11** przełącza terminal w tryb przezroczystej nakładki typu HUD (`WS_EX_TOPMOST` + `WS_EX_LAYERED`).
-- Pasek ISOBUS dokuje się bezpośrednio do prawej lub lewej krawędzi okna AgOpenGPS z regulowaną przezroczystością, umożliwiając jednoczesną obserwację linii prowadzenia i parametrów maszyny.
+- Klawisz **`F11`** przełącza isoVT w przezroczystą nakładkę HUD (`WS_EX_TOPMOST` + `WS_EX_LAYERED`).
+- Terminal unosi się stabilnie nad mapą AgOpenGPS, umożliwiając jednoczesną obserwację linii nawigacyjnych i parametrów maszyny.
 
-### 6. Wejścia AUX-N i Joysticki
-- Zgodność z ISO 11783-9 (Auxiliary Inputs New).
-- Mapowanie fizycznych przycisków i osi dżojstików USB / CAN na funkcje maszyn ISOBUS.
+### 6. Wejścia AUX-N & Joysticki
+- Zgodność z normą ISO 11783-9 (Auxiliary Inputs New).
+- Mapowanie fizycznych przycisków i osi joysticków USB / CAN na funkcje maszyn roboczych.
 
 ---
 
-## 📦 Pobieranie i Gotowe Wydanie (Release v1.0.0)
+## 📦 Szybki Start & Pobieranie (Nightbuild)
 
-Gotowe, skompilowane wydanie dla systemu Windows (64-bit) można pobrać bezpośrednio z zakładki [**Releases**](../../releases):
+Najnowszą wersję binarną bez konieczności kompilowania pobierzesz w zakładce [**Releases**](../../releases):
 
-| Plik | Platforma | Zawartość |
-| :--- | :--- | :--- |
-| `AG-ISOBUS-PRO-v1.0.0-Win64.zip` | Windows 10/11 x64 | Gotowy program `isobus_vt_terminal.exe`, skrypt startowy `run_terminal.bat`, instrukcja |
-
-Program jest całkowicie przenośny (portable) – nie wymaga instalatora ani zewnętrznych środowisk uruchomieniowych.
+1. Pobierz archiwum **`isoVT-Nightbuild-Win64.zip`**.
+2. Rozpakuj je w dowolnym folderze.
+3. Podłącz swój interfejs CAN (np. PEAK PCAN-USB) lub uruchom tryb wirtualny.
+4. Uruchom aplikację plikiem **`run_terminal.bat`** lub **`isobus_vt_terminal.exe`**.
 
 ---
 
@@ -120,67 +119,64 @@ Program jest całkowicie przenośny (portable) – nie wymaga instalatora ani ze
 
 ### Wymagania:
 - System: **Windows 10 / 11** (x64)
-- Środowisko: **Visual Studio 2019 / 2022** (MSVC C++17)
+- Kompilator: **MSVC (Visual Studio 2019 / 2022)** z obsługą C++17
 - Narzędzie: **CMake 3.16+**
 - Karta graficzna z obsługą **DirectX 11**
 
-### Instrukcja kompilacji:
+### Kompilacja:
 ```powershell
 # 1. Klonowanie repozytorium
 git clone https://github.com/horczakdamian24-sketch/ag-isobus-terminal.git
 cd ag-isobus-terminal
 
-# 2. Generowanie plików projektu (CMake automatycznie pobierze wymagane biblioteki)
+# 2. Generowanie plików (CMake automatycznie pobierze wymagane biblioteki)
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 
-# 3. Kompilacja wersji Release
+# 3. Kompilacja
 cmake --build build --config Release
 ```
 
-Skompilowany plik binarny zostanie utworzony w katalogu:  
+Gotowy plik wykonywalny powstanie w folderze:  
 `build/isobus_vt_terminal/Release/isobus_vt_terminal.exe`
 
 ---
 
-## 🚜 Konfiguracja z AgOpenGPS
+## 🚜 Uruchomienie z AgOpenGPS
 
-1. Uruchom aplikację **AgOpenGPS** oraz moduł komunikacyjny **AgIO**.
-2. W AgOpenGPS upewnij się, że włączona jest automatyczna kontrola sekcji (ikona opryskiwacza/sekcji na zielono).
-3. Uruchom terminal poleceniem:
-   ```cmd
-   run_terminal.bat
-   ```
-4. Terminal automatycznie połączy się z AgIO po protokole UDP (port nasłuchu `8888`, port nadawania `9999`).
-5. Naciśnij **F11**, aby zadokować terminal jako przezroczystą nakładkę HUD obok mapy prowadzenia pola.
+1. Włącz **AgOpenGPS** oraz moduł **AgIO**.
+2. Włącz automatyczną kontrolę sekcji (ikona opryskiwacza/sekcji na zielono).
+3. Uruchom **isoVT** (`run_terminal.bat`).
+4. Terminal połączy się automatycznie z AgIO przez port UDP `8888`.
+5. Wciśnij **`F11`**, aby zadokować terminal jako przezroczystą nakładkę HUD obok mapy prowadzenia ciągnika.
 
 ---
 
-## ⌨️ Klawiszologia i Skróty
+## ⌨️ Klawisze i Skróty
 
-| Klawisz | Akcja |
+| Klawisz | Funkcja |
 | :--- | :--- |
-| **`F11`** | Przełącz tryb dokowanej nakładki HUD / Studio |
-| **`F2`** | Otwórz okno Ustawień i Konfiguracji Terminala |
-| **`F1` – `F6`** | Klawisze programowe SoftKeys prawej kolumny |
-| **`F7` – `F12`**| Klawisze programowe SoftKeys lewej kolumny |
-| **`ESC`** | Zamknij aktywne okno modalne / reset widoku |
-| **`Enter`** | Potwierdzenie wprowadzonej wartości numerycznej |
+| **`F11`** | Przełącz tryb przezroczystej nakładki HUD / Studio |
+| **`F2`** | Konfiguracja sprzętowa CAN i portów AgOpenGPS |
+| **`F1` – `F6`** | Klawisze programowe SoftKeys (prawa kolumna) |
+| **`F7` – `F12`**| Klawisze programowe SoftKeys (lewa kolumna) |
+| **`ESC`** | Zamknięcie okna dialogowego / reset widoku |
+| **`Enter`** | Zatwierdzenie wartości liczbowej |
 
 ---
 
 ## 🔌 Wspierany Sprzęt CAN
 
 - **PEAK-System:** PCAN-USB, PCAN-USB Pro, PCAN-PCIe.
-- **ESP32 / Arduino:** Dowolny mikrokontroler z transceiverem SN65HVD230 / MCP2515 wysyłający ramki CAN 250 kbps (J1939 / ISO 11783).
-- **Tryb Virtual CAN:** Wbudowany symulator magistrali w pamięci RAM do testów bez konieczności podłączania fizycznego sprzętu.
+- **ESP32 / Arduino:** Dowolny sterownik z transceiverem CAN wysyłający ramki 250 kbps (J1939 / ISO 11783).
+- **Virtual CAN:** Wbudowany symulator magistrali w pamięci RAM do testów bez fizycznego adaptera.
 
 ---
 
-## 📄 Licencja & Informacje Prawne
+## 📄 Licencja & Autor
 
-Projekt udostępniany na licencji **MIT**. Zgodny z normami międzynarodowymi:
-- **ISO 11783-6:** Ciągniki i maszyny rolnicze i leśne – Część 6: Wirtualny Terminal.
-- **ISO 11783-10:** Część 10: Kontroler Zadań i systemy wymiany danych.
+Projekt udostępniany na licencji **MIT**. Zgodny ze standardami:
+- **ISO 11783-6:** Ciągniki i maszyny rolnicze – Część 6: Wirtualny Terminal (VT)
+- **ISO 11783-10:** Część 10: Kontroler Zadań (Task Controller & Section Control)
 
-Autor projektu: **Damian Horczak**  
+**Autor:** Damian Horczak  
 Precision Agriculture & ISOBUS Architecture
