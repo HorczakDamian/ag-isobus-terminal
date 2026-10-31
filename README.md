@@ -11,8 +11,6 @@
 
 **Nowoczesny, komercyjnej klasy Wirtualny Terminal ISOBUS (ISO 11783-6) zintegrowany z Kontrolerem Zadań i Kontrolą Sekcji dla AgOpenGPS.**
 
-*System Architecture & Precision Ag Engineering by **D. Horczak***
-
 ---
 
 </div>
@@ -32,7 +30,7 @@
 - [Uruchomienie z AgOpenGPS](#-uruchomienie-z-agopengps)
 - [Klawisze i Skróty](#-klawisze-i-skróty)
 - [Wspierany Sprzęt CAN](#-wspierany-sprzęt-can)
-- [Licencja & Autor](#-licencja--autor)
+- [Licencja & Standardy](#-licencja--standardy)
 
 ---
 
@@ -49,7 +47,7 @@ Projekt został zaprojektowany z myślą o rolnictwie precyzyjnym — stanowi be
 ```text
  ┌────────────────────────────────────────────────────────┐
  │                         isoVT                          │
- │         DirectX 11 Core Engine (by D. Horczak)         │
+ │                 DirectX 11 Core Engine                 │
  └──────────────────────────┬─────────────────────────────┘
                             │
        ┌────────────────────┴────────────────────┐
@@ -172,11 +170,10 @@ Gotowy plik wykonywalny powstanie w folderze:
 
 ---
 
-## 📄 Licencja & Autor
+## 📄 Licencja & Standardy
 
 Projekt udostępniany na licencji **MIT**. Zgodny ze standardami:
 - **ISO 11783-6:** Ciągniki i maszyny rolnicze – Część 6: Wirtualny Terminal (VT)
 - **ISO 11783-10:** Część 10: Kontroler Zadań (Task Controller & Section Control)
 
-**Autor:** Damian Horczak  
 Precision Agriculture & ISOBUS Architecture
