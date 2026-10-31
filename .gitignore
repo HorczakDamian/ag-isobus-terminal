@@ -22,6 +22,7 @@ CMakeCache.txt
 *.exp
 *.obj
 *.idb
+*.zip
 
 # Dynamic caches, crash logs & user settings
 object_pool_cache/
@@ -38,6 +39,8 @@ esp32_machine_examples/
 isobus_esp32_client/
 docs/
 tools/
+AgIsoStack-plus-plus-main/
+AgIsoStack*/
 
 # Visual Studio & IDE artifacts
 .vs/

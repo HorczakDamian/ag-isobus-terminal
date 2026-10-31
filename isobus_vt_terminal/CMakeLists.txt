@@ -13,11 +13,22 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Enable both Windows PCAN Basic and Virtual CAN
 set(CAN_DRIVER "WindowsPCANBasic;VirtualCAN" CACHE STRING "CAN drivers to build" FORCE)
 
-# Add AgIsoStack++ library from parent directory
-add_subdirectory(
-  "${CMAKE_CURRENT_SOURCE_DIR}/../AgIsoStack-plus-plus-main"
-  "${CMAKE_CURRENT_BINARY_DIR}/ag_isostack"
-)
+# Add AgIsoStack++ library (local folder if present, or auto-fetch via Git)
+include(FetchContent)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../AgIsoStack-plus-plus-main/CMakeLists.txt")
+  add_subdirectory(
+    "${CMAKE_CURRENT_SOURCE_DIR}/../AgIsoStack-plus-plus-main"
+    "${CMAKE_CURRENT_BINARY_DIR}/ag_isostack"
+  )
+else()
+  message(STATUS "AgIsoStack++ not found locally, fetching from GitHub...")
+  FetchContent_Declare(
+    agisostack
+    GIT_REPOSITORY https://github.com/Open-Agriculture/AgIsoStack-plus-plus.git
+    GIT_TAG main
+  )
+  FetchContent_MakeAvailable(agisostack)
+endif()
 
 # ImGui sources
 set(IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../imgui_src")
