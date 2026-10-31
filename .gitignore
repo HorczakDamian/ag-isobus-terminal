@@ -32,15 +32,19 @@ object_pool_cache/
 imgui.ini
 vt_settings.ini
 
-# AgOpenGPS standalone suite, firmwares & external docs
-agopen/
-tcagopen/
+# Firmwares & external docs
 esp32_machine_examples/
 isobus_esp32_client/
 docs/
 tools/
 AgIsoStack-plus-plus-main/
 AgIsoStack*/
+
+# Whitelist AgOpenGPS & AOG-TaskController suites
+!agopen/
+!agopen/**
+!tcagopen/
+!tcagopen/**
 
 # Visual Studio & IDE artifacts
 .vs/
