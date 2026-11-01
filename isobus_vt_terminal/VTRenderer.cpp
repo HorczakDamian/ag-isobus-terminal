@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <ctime>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -734,16 +735,22 @@ namespace isobus_vt
 
         const auto &cfg = TerminalSettings::get_instance().get_config();
 
-        // Outer bezel styling (Rugged, Modern Glass, or Minimalist)
-        ImVec2 bezelBR(origin.x + PADDING + WS_W + 4.0f + DATA_W + 4.0f + SK_W + PADDING,
-                       origin.y + DATA_H + PADDING * 2.0f);
-
+        // Outer bezel styling (Müller-Elektronik TOUCH800, Modern Glass, Minimalist, Rugged)
+        float topHeaderH = 0.0f;
         ImU32 bezelBg = IM_COL32(30, 32, 38, 255);
         ImU32 bezelBorder = IM_COL32(65, 70, 82, 255);
         float bezelRounding = 10.0f;
         float bezelThickness = 2.0f;
 
-        if (cfg.bezelStyle == 1) // Modern Glass
+        if (cfg.bezelStyle == 0) // Müller-Elektronik TOUCH800 / TOUCH1200
+        {
+            topHeaderH = 30.0f;
+            bezelBg = IM_COL32(20, 23, 29, 255); // Müller signature matte graphite
+            bezelBorder = IM_COL32(14, 88, 185, 255); // Müller cobalt blue border
+            bezelRounding = 12.0f;
+            bezelThickness = 2.5f;
+        }
+        else if (cfg.bezelStyle == 1) // Modern Glass
         {
             bezelBg = IM_COL32(18, 22, 28, 255);
             bezelBorder = IM_COL32(50, 95, 150, 220);
@@ -758,34 +765,97 @@ namespace isobus_vt
             bezelThickness = 1.0f;
         }
 
+        ImVec2 bezelBR(origin.x + PADDING + WS_W + 4.0f + DATA_W + 4.0f + SK_W + PADDING,
+                       origin.y + topHeaderH + DATA_H + PADDING * 2.0f);
+
         dl->AddRectFilled(origin, bezelBR, bezelBg, bezelRounding);
         dl->AddRect(origin, bezelBR, bezelBorder, bezelRounding, 0, bezelThickness);
+
+        // Draw Müller-Elektronik TOUCH800 Top Header Bar
+        if (cfg.bezelStyle == 0)
+        {
+            float barX = origin.x + PADDING;
+            float barY = origin.y + 6.0f;
+            float barW = WS_W + 4.0f + DATA_W + 4.0f + SK_W;
+            float barH = 24.0f;
+
+            // Bar background & blue line
+            dl->AddRectFilled(ImVec2(barX, barY), ImVec2(barX + barW, barY + barH), IM_COL32(14, 17, 23, 255), 4.0f);
+            dl->AddLine(ImVec2(barX, barY + barH - 1.0f), ImVec2(barX + barW, barY + barH - 1.0f), IM_COL32(14, 88, 185, 255), 2.0f);
+
+            // Left: ME Blue Badge & Logo
+            dl->AddRectFilled(ImVec2(barX + 4.0f, barY + 3.0f), ImVec2(barX + 32.0f, barY + barH - 3.0f), IM_COL32(14, 88, 185, 255), 3.0f);
+            dl->AddText(ImVec2(barX + 7.0f, barY + 4.0f), IM_COL32(255, 255, 255, 255), "ME");
+            dl->AddText(ImVec2(barX + 38.0f, barY + 4.0f), IM_COL32(255, 255, 255, 255), "M\xc3\x9cLLER-ELEKTRONIK");
+            dl->AddText(ImVec2(barX + 215.0f, barY + 4.0f), IM_COL32(14, 135, 250, 255), "TOUCH800");
+
+            // Center: Active Application / Implement Model Badge
+            std::string centerTitle = isWsReady ? "TITAN-XT 16000 ULTRA" : "SYSTEM STANDBY";
+            ImVec2 cSz = ImGui::CalcTextSize(centerTitle.c_str());
+            float cX = barX + (barW - cSz.x) * 0.5f;
+            dl->AddRectFilled(ImVec2(cX - 8.0f, barY + 3.0f), ImVec2(cX + cSz.x + 8.0f, barY + barH - 3.0f), IM_COL32(28, 34, 46, 255), 3.0f);
+            dl->AddRect(ImVec2(cX - 8.0f, barY + 3.0f), ImVec2(cX + cSz.x + 8.0f, barY + barH - 3.0f), IM_COL32(14, 88, 185, 180), 3.0f);
+            dl->AddText(ImVec2(cX, barY + 4.0f), IM_COL32(220, 235, 255, 255), centerTitle.c_str());
+
+            // Right: Status Badges & Clock
+            float rx = barX + barW - 6.0f;
+
+            // Live Time Clock
+            time_t now = time(nullptr);
+            tm ltm;
+            localtime_s(&ltm, &now);
+            char timeBuf[16];
+            snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d:%02d", ltm.tm_hour, ltm.tm_min, ltm.tm_sec);
+            rx -= 55.0f;
+            dl->AddText(ImVec2(rx, barY + 4.0f), IM_COL32(180, 195, 215, 255), timeBuf);
+
+            // Voltage & Bus
+            rx -= 50.0f;
+            dl->AddText(ImVec2(rx, barY + 4.0f), IM_COL32(100, 210, 255, 255), "14.1 V");
+
+            // Master Status
+            rx -= 75.0f;
+            dl->AddCircleFilled(ImVec2(rx + 6.0f, barY + 12.0f), 4.0f, IM_COL32(46, 204, 113, 255));
+            dl->AddText(ImVec2(rx + 15.0f, barY + 4.0f), IM_COL32(220, 230, 240, 255), "MASTER");
+
+            // TC-SC Status
+            rx -= 70.0f;
+            dl->AddCircleFilled(ImVec2(rx + 6.0f, barY + 12.0f), 4.0f, IM_COL32(243, 156, 18, 255));
+            dl->AddText(ImVec2(rx + 15.0f, barY + 4.0f), IM_COL32(220, 230, 240, 255), "TC-SC");
+
+            // GPS RTK Status
+            rx -= 85.0f;
+            dl->AddCircleFilled(ImVec2(rx + 6.0f, barY + 12.0f), 4.0f, IM_COL32(46, 204, 113, 255));
+            dl->AddText(ImVec2(rx + 15.0f, barY + 4.0f), IM_COL32(220, 230, 240, 255), "GPS RTK");
+        }
 
         ImVec2 wsPos, maskPos, skPos;
         ImVec2 wsSize(WS_W, DATA_H);
         ImVec2 maskSize(DATA_W, DATA_H);
         ImVec2 skSize(SK_W, DATA_H);
 
+        float contentTop = origin.y + PADDING + topHeaderH;
         if (cfg.softKeyOnRight)
         {
             // Standard layout: WS Bar on Left -> DataMask in Middle -> SoftKeys on Right
-            wsPos = ImVec2(origin.x + PADDING, origin.y + PADDING);
-            maskPos = ImVec2(wsPos.x + WS_W + 4.0f, origin.y + PADDING);
-            skPos = ImVec2(maskPos.x + DATA_W + 4.0f, origin.y + PADDING);
+            wsPos = ImVec2(origin.x + PADDING, contentTop);
+            maskPos = ImVec2(wsPos.x + WS_W + 4.0f, contentTop);
+            skPos = ImVec2(maskPos.x + DATA_W + 4.0f, contentTop);
         }
         else
         {
             // Left-handed layout: SoftKeys on Left -> WS Bar in Middle -> DataMask on Right
-            skPos = ImVec2(origin.x + PADDING, origin.y + PADDING);
-            wsPos = ImVec2(skPos.x + SK_W + 4.0f, origin.y + PADDING);
-            maskPos = ImVec2(wsPos.x + WS_W + 4.0f, origin.y + PADDING);
+            skPos = ImVec2(origin.x + PADDING, contentTop);
+            wsPos = ImVec2(skPos.x + SK_W + 4.0f, contentTop);
+            maskPos = ImVec2(wsPos.x + WS_W + 4.0f, contentTop);
         }
 
         // ── Working Set / ECU Designator Bar ──
-        dl->AddRectFilled(wsPos, ImVec2(wsPos.x + wsSize.x, wsPos.y + wsSize.y),
-                          IM_COL32(26, 28, 34, 255), 4.0f);
-        dl->AddRect(wsPos, ImVec2(wsPos.x + wsSize.x, wsPos.y + wsSize.y),
-                    IM_COL32(58, 63, 74, 255), 4.0f, 0, 1.5f);
+        bool isMuller = (cfg.bezelStyle == 0);
+        ImU32 wsBg = isMuller ? IM_COL32(20, 23, 29, 255) : IM_COL32(26, 28, 34, 255);
+        ImU32 wsBorder = isMuller ? IM_COL32(14, 88, 185, 255) : IM_COL32(58, 63, 74, 255);
+        dl->AddRectFilled(wsPos, ImVec2(wsPos.x + wsSize.x, wsPos.y + wsSize.y), wsBg, 4.0f);
+        dl->AddRect(wsPos, ImVec2(wsPos.x + wsSize.x, wsPos.y + wsSize.y), wsBorder, 4.0f, 0, isMuller ? 2.0f : 1.5f);
 
         const auto &allWs = vtServer->get_all_ws();
         float desW = 60.0f * maskScale;
@@ -874,18 +944,25 @@ namespace isobus_vt
                               mousePos.y >= ackTL.y && mousePos.y <= ackBR.y);
             bool isMouseDown = isHovered && ImGui::IsMouseDown(ImGuiMouseButton_Left);
 
-            // Keyboard shortcut: ESC triggers alarm ACK immediately
+            // Keyboard shortcut: ESC triggers alarm ACK immediately (only when an alarm is active!)
             bool escDown = ImGui::IsKeyDown(ImGuiKey_Escape);
             bool currentPressed = (isMouseDown || escDown);
 
-            if (currentPressed != ackButtonHeld)
+            if (alarmActive)
             {
-                ackButtonHeld = currentPressed;
-                if (currentPressed)
+                if (currentPressed != ackButtonHeld)
                 {
-                    AudioBeeper::get_instance().play_ack_chime();
+                    ackButtonHeld = currentPressed;
+                    if (currentPressed)
+                    {
+                        AudioBeeper::get_instance().play_ack_chime();
+                    }
+                    vtServer->send_alarm_ack_command(ackButtonHeld);
                 }
-                vtServer->send_alarm_ack_command(ackButtonHeld);
+            }
+            else
+            {
+                ackButtonHeld = false;
             }
 
             if (alarmActive || isHovered)
@@ -1012,7 +1089,7 @@ namespace isobus_vt
             render_soft_keys(skPos, skSize, nullptr, isobus::NULL_OBJECT_ID);
         }
 
-        ImGui::SetCursorScreenPos(ImVec2(origin.x, origin.y + (DATA_H + PADDING * 2.0f) + 10.0f));
+        ImGui::SetCursorScreenPos(ImVec2(origin.x, origin.y + topHeaderH + (DATA_H + PADDING * 2.0f) + 10.0f));
 
         // ── Settings toolbar (below VT display) ───────────────────────────────
         ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.22f, 0.25f, 0.32f, 1.0f));
@@ -1990,10 +2067,13 @@ namespace isobus_vt
     {
         ImDrawList *dl = ImGui::GetWindowDrawList();
 
-        dl->AddRectFilled(barPos, ImVec2(barPos.x + barSize.x, barPos.y + barSize.y),
-                          IM_COL32(26, 28, 34, 255), 4.0f);
-        dl->AddRect(barPos, ImVec2(barPos.x + barSize.x, barPos.y + barSize.y),
-                    IM_COL32(58, 63, 74, 255), 4.0f, 0, 1.5f);
+        const auto &cfg = TerminalSettings::get_instance().get_config();
+        bool isMuller = (cfg.bezelStyle == 0);
+
+        ImU32 barBg = isMuller ? IM_COL32(20, 23, 29, 255) : IM_COL32(26, 28, 34, 255);
+        ImU32 barBorder = isMuller ? IM_COL32(14, 88, 185, 255) : IM_COL32(58, 63, 74, 255);
+        dl->AddRectFilled(barPos, ImVec2(barPos.x + barSize.x, barPos.y + barSize.y), barBg, 4.0f);
+        dl->AddRect(barPos, ImVec2(barPos.x + barSize.x, barPos.y + barSize.y), barBorder, 4.0f, 0, isMuller ? 2.0f : 1.5f);
 
         // Use configured SK row count
         int numKeys = static_cast<int>(vtServer->get_configured_sk_rows());
@@ -2032,10 +2112,22 @@ namespace isobus_vt
             bool hov      = ImGui::IsItemHovered();
 
             // Background drawn via draw-list (on top of InvisibleButton)
-            ImU32 cellBg = IM_COL32(42, 47, 58, 255);
-            if (hov) cellBg = isDown ? IM_COL32(85, 105, 138, 255) : IM_COL32(60, 72, 90, 255);
+            ImU32 cellBg = isMuller ? IM_COL32(28, 32, 40, 255) : IM_COL32(42, 47, 58, 255);
+            if (hov) cellBg = isDown ? (isMuller ? IM_COL32(14, 88, 185, 255) : IM_COL32(85, 105, 138, 255))
+                                     : (isMuller ? IM_COL32(40, 48, 62, 255) : IM_COL32(60, 72, 90, 255));
             dl->AddRectFilled(kPos, kMax, cellBg, 4.0f);
-            dl->AddRect(kPos, kMax, IM_COL32(85, 92, 108, 255), 4.0f, 0, 1.2f);
+
+            ImU32 borderCol = isMuller ? (hov ? IM_COL32(14, 135, 250, 255) : IM_COL32(50, 60, 76, 255))
+                                       : IM_COL32(85, 92, 108, 255);
+            float borderThick = (isMuller && hov) ? 2.0f : 1.2f;
+            dl->AddRect(kPos, kMax, borderCol, 4.0f, 0, borderThick);
+
+            if (isMuller)
+            {
+                // SoftKey position badge in top right: F1..F6
+                std::string fBadge = "F" + std::to_string(i + 1);
+                dl->AddText(ImVec2(kMax.x - 18.0f, kPos.y + 3.0f), IM_COL32(120, 140, 170, 180), fBadge.c_str());
+            }
 
             if (skMaskObj && i < static_cast<int>(skMaskObj->get_number_children()))
             {
@@ -2528,12 +2620,13 @@ namespace isobus_vt
                         ImGui::Spacing();
                         ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Wyglad i auto-skalowanie grafiki:");
                         const char *bezStyles[] = {
-                            "Traktorowy Rugged (Ciemny grafit / masywna ramka)",
+                            "M\xc3\x9cller-Elektronik TOUCH800 (Grafit / Niebieski akcent ME / Status Bar)",
                             "Nowoczesny Glass (Sciete rogi / szklany akcent)",
-                            "Minimalistyczny Frameless (Cienka ramka)"
+                            "Minimalistyczny Frameless (Cienka ramka)",
+                            "Traktorowy Rugged (Ciemny grafit / masywna ramka)"
                         };
                         ImGui::SetNextItemWidth(360.0f);
-                        ImGui::Combo("Styl obudowy terminala", &cfg.bezelStyle, bezStyles, 3);
+                        ImGui::Combo("Styl obudowy terminala", &cfg.bezelStyle, bezStyles, 4);
 
                         ImGui::Checkbox("Automatyczne dopasowanie grafik klawiszy (Auto-Scale SoftKeys)", &cfg.autoScaleSoftKeys);
                         ImGui::Checkbox("Automatyczne dopasowanie maski danych (Auto-Scale DataMask)", &cfg.autoScaleDataMask);

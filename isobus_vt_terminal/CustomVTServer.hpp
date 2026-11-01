@@ -102,7 +102,7 @@ namespace isobus_vt
     private:
         std::string get_cache_file_path(std::uint64_t clientNameRaw, const std::string &label) const;
         void scan_cache_directory();
-        mutable std::mutex serverMutex;
+        mutable std::recursive_mutex serverMutex;
         std::atomic<bool> repaintRequested{false};
         std::uint16_t currentOpenInputObjectID = isobus::NULL_OBJECT_ID;
 

@@ -18,7 +18,7 @@ namespace isobus_vt
         });
 
         get_on_change_active_mask_event_dispatcher().add_listener([this](std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet> ws, std::uint16_t, std::uint16_t newMaskId) {
-            std::lock_guard<std::mutex> lock(serverMutex);
+            std::lock_guard<std::recursive_mutex> lock(serverMutex);
             activeWorkingSetDataMaskObjectID = newMaskId;
             if (ws)
             {
@@ -57,7 +57,7 @@ namespace isobus_vt
         });
 
         get_on_change_active_softkey_mask_event_dispatcher().add_listener([this](std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet> ws, std::uint16_t, std::uint16_t newSkMaskId) {
-            std::lock_guard<std::mutex> lock(serverMutex);
+            std::lock_guard<std::recursive_mutex> lock(serverMutex);
             activeWorkingSetSoftkeyMaskObjectID = newSkMaskId;
             repaintRequested = true;
             LOG_INFO("[VT Server]: Active soft key mask changed to %u", newSkMaskId);
@@ -147,7 +147,7 @@ namespace isobus_vt
 
     void CustomVTServer::scan_cache_directory()
     {
-        std::lock_guard<std::mutex> lock(serverMutex);
+        std::lock_guard<std::recursive_mutex> lock(serverMutex);
         poolStorage.clear();
 
         std::error_code ec;
@@ -193,13 +193,13 @@ namespace isobus_vt
 
     std::size_t CustomVTServer::get_cached_pool_count() const
     {
-        std::lock_guard<std::mutex> lock(serverMutex);
+        std::lock_guard<std::recursive_mutex> lock(serverMutex);
         return poolStorage.size();
     }
 
     std::size_t CustomVTServer::get_cached_pool_total_bytes() const
     {
-        std::lock_guard<std::mutex> lock(serverMutex);
+        std::lock_guard<std::recursive_mutex> lock(serverMutex);
         std::size_t total = 0;
         for (const auto &p : poolStorage)
         {
@@ -210,7 +210,7 @@ namespace isobus_vt
 
     void CustomVTServer::clear_disk_cache()
     {
-        std::lock_guard<std::mutex> lock(serverMutex);
+        std::lock_guard<std::recursive_mutex> lock(serverMutex);
         poolStorage.clear();
         std::error_code ec;
         for (const auto &entry : std::filesystem::directory_iterator("object_pool_cache", ec))
@@ -270,7 +270,7 @@ namespace isobus_vt
 
     std::vector<std::array<std::uint8_t, 7>> CustomVTServer::get_versions(isobus::NAME clientNAME)
     {
-        std::lock_guard<std::mutex> lock(serverMutex);
+        std::lock_guard<std::recursive_mutex> lock(serverMutex);
         std::vector<std::array<std::uint8_t, 7>> versions;
         std::uint64_t targetName = clientNAME.get_full_name();
 
@@ -297,7 +297,7 @@ namespace isobus_vt
 
     std::vector<std::array<std::uint8_t, 32>> CustomVTServer::get_extended_versions(isobus::NAME clientNAME)
     {
-        std::lock_guard<std::mutex> lock(serverMutex);
+        std::lock_guard<std::recursive_mutex> lock(serverMutex);
         std::vector<std::array<std::uint8_t, 32>> extVersions;
         std::uint64_t targetName = clientNAME.get_full_name();
 
@@ -321,7 +321,7 @@ namespace isobus_vt
 
     std::vector<std::uint8_t> CustomVTServer::load_version(const std::vector<std::uint8_t> &versionLabel, isobus::NAME clientNAME)
     {
-        std::lock_guard<std::mutex> lock(serverMutex);
+        std::lock_guard<std::recursive_mutex> lock(serverMutex);
         std::string label(versionLabel.begin(), versionLabel.end());
         while (!label.empty() && (label.back() == ' ' || label.back() == '\0'))
             label.pop_back();
@@ -357,7 +357,7 @@ namespace isobus_vt
 
     bool CustomVTServer::save_version(const std::vector<std::uint8_t> &objectPool, const std::vector<std::uint8_t> &versionLabel, isobus::NAME clientNAME)
     {
-        std::lock_guard<std::mutex> lock(serverMutex);
+        std::lock_guard<std::recursive_mutex> lock(serverMutex);
         std::string label(versionLabel.begin(), versionLabel.end());
         while (!label.empty() && (label.back() == ' ' || label.back() == '\0'))
             label.pop_back();
@@ -380,7 +380,7 @@ namespace isobus_vt
 
     bool CustomVTServer::delete_version(const std::vector<std::uint8_t> &versionLabel, isobus::NAME clientNAME)
     {
-        std::lock_guard<std::mutex> lock(serverMutex);
+        std::lock_guard<std::recursive_mutex> lock(serverMutex);
         std::string label(versionLabel.begin(), versionLabel.end());
         while (!label.empty() && (label.back() == ' ' || label.back() == '\0'))
             label.pop_back();
@@ -396,7 +396,7 @@ namespace isobus_vt
 
     bool CustomVTServer::delete_all_versions(std::uint8_t, isobus::NAME clientNAME)
     {
-        std::lock_guard<std::mutex> lock(serverMutex);
+        std::lock_guard<std::recursive_mutex> lock(serverMutex);
         for (auto it = poolStorage.begin(); it != poolStorage.end(); )
         {
             if (it->first.first == clientNAME.get_full_name())
@@ -447,7 +447,7 @@ namespace isobus_vt
 
     void CustomVTServer::select_working_set(std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet> workingSet)
     {
-        std::lock_guard<std::mutex> lock(serverMutex);
+        std::lock_guard<std::recursive_mutex> lock(serverMutex);
         if (!workingSet)
         {
             activeWorkingSet = nullptr;
@@ -510,19 +510,19 @@ namespace isobus_vt
 
     std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet> CustomVTServer::get_active_ws()
     {
-        std::lock_guard<std::mutex> lock(serverMutex);
+        std::lock_guard<std::recursive_mutex> lock(serverMutex);
         return get_active_working_set();
     }
 
     std::vector<std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet>> CustomVTServer::get_all_ws()
     {
-        std::lock_guard<std::mutex> lock(serverMutex);
+        std::lock_guard<std::recursive_mutex> lock(serverMutex);
         return managedWorkingSetList;
     }
 
     std::uint16_t CustomVTServer::get_active_data_mask_id() const
     {
-        std::lock_guard<std::mutex> lock(serverMutex);
+        std::lock_guard<std::recursive_mutex> lock(serverMutex);
         if (activeWorkingSet && activeWorkingSet->get_working_set_object())
         {
             auto wsObj = std::dynamic_pointer_cast<isobus::WorkingSet>(activeWorkingSet->get_working_set_object());
@@ -536,7 +536,7 @@ namespace isobus_vt
 
     std::uint16_t CustomVTServer::get_active_soft_key_mask_id() const
     {
-        std::lock_guard<std::mutex> lock(serverMutex);
+        std::lock_guard<std::recursive_mutex> lock(serverMutex);
         if (activeWorkingSetSoftkeyMaskObjectID != isobus::NULL_OBJECT_ID)
         {
             return activeWorkingSetSoftkeyMaskObjectID;
@@ -589,7 +589,7 @@ namespace isobus_vt
     std::uint16_t CustomVTServer::get_working_set_active_mask(std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet> ws) const
     {
         if (!ws) return isobus::NULL_OBJECT_ID;
-        std::lock_guard<std::mutex> lock(serverMutex);
+        std::lock_guard<std::recursive_mutex> lock(serverMutex);
         if (ws->get_working_set_object())
         {
             auto wsObj = std::dynamic_pointer_cast<isobus::WorkingSet>(ws->get_working_set_object());
@@ -743,10 +743,17 @@ namespace isobus_vt
 
     bool CustomVTServer::switch_working_set(std::size_t index)
     {
-        std::lock_guard<std::mutex> lock(serverMutex);
-        if (index < managedWorkingSetList.size())
+        std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet> targetWs = nullptr;
         {
-            select_working_set(managedWorkingSetList[index]);
+            std::lock_guard<std::recursive_mutex> lock(serverMutex);
+            if (index < managedWorkingSetList.size())
+            {
+                targetWs = managedWorkingSetList[index];
+            }
+        }
+        if (targetWs)
+        {
+            select_working_set(targetWs);
             return true;
         }
         return false;
