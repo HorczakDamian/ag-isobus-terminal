@@ -5,6 +5,9 @@
 #include <ws2tcpip.h>
 
 #include "TaskControllerManager.hpp"
+#include "FieldNavigation.hpp"
+#include "TcBasReportManager.hpp"
+#include "TractorEcuManager.hpp"
 #include "isobus/isobus/can_network_manager.hpp"
 #include "isobus/isobus/can_stack_logger.hpp"
 #include "isobus/isobus/isobus_preferred_addresses.hpp"
@@ -19,6 +22,18 @@
 
 namespace isobus_vt
 {
+static void safe_update_tc(isobus::TaskControllerServer* tc)
+{
+    if (!tc) return;
+    __try
+    {
+        tc->update();
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+    }
+}
+
     // =========================================================================
     // TcClientState Implementation
     // =========================================================================
@@ -80,6 +95,35 @@ namespace isobus_vt
                                isobus::TaskControllerOptions().with_implement_section_control(),
                                version)
     {
+    }
+
+    TerminalTCServer::~TerminalTCServer()
+    {
+        remove_safe_callbacks();
+    }
+
+    void TerminalTCServer::install_safe_callbacks()
+    {
+        isobus::CANNetworkManager::CANNetwork.remove_global_parameter_group_number_callback(0x00CB00, store_rx_message, this);
+        isobus::CANNetworkManager::CANNetwork.remove_global_parameter_group_number_callback(0x00FE0D, store_rx_message, this);
+
+        isobus::CANNetworkManager::CANNetwork.add_global_parameter_group_number_callback(0x00CB00, safe_store_rx_message, this);
+        isobus::CANNetworkManager::CANNetwork.add_global_parameter_group_number_callback(0x00FE0D, safe_store_rx_message, this);
+    }
+
+    void TerminalTCServer::remove_safe_callbacks()
+    {
+        isobus::CANNetworkManager::CANNetwork.remove_global_parameter_group_number_callback(0x00CB00, safe_store_rx_message, this);
+        isobus::CANNetworkManager::CANNetwork.remove_global_parameter_group_number_callback(0x00FE0D, safe_store_rx_message, this);
+    }
+
+    void TerminalTCServer::safe_store_rx_message(const isobus::CANMessage &message, void *parentPointer)
+    {
+        if (!message.get_source_control_function())
+        {
+            return;
+        }
+        store_rx_message(message, parentPointer);
     }
 
     bool TerminalTCServer::store_device_descriptor_object_pool(std::shared_ptr<isobus::ControlFunction> partnerCF,
@@ -286,24 +330,29 @@ namespace isobus_vt
             fallbackActualStates[sec] = state;
         if (sec < fallbackSetpoints.size())
             fallbackSetpoints[sec] = state;
+
+        for (auto &pair : clients)
+        {
+            if (sec < pair.second.get_number_of_sections())
+            {
+                pair.second.set_section_actual(sec, state ? static_cast<std::uint8_t>(SectionState::On) : static_cast<std::uint8_t>(SectionState::Off));
+                pair.second.set_section_setpoint(sec, state ? static_cast<std::uint8_t>(SectionState::On) : static_cast<std::uint8_t>(SectionState::Off));
+            }
+        }
     }
 
     void TerminalTCServer::update_section_setpoints(const std::vector<bool> &states)
     {
         std::lock_guard<std::recursive_mutex> lock(clientMutex);
-        if (clients.empty())
+        for (std::size_t i = 0; i < fallbackSections && i < states.size(); ++i)
         {
-            for (std::size_t i = 0; i < fallbackSections && i < states.size(); ++i)
+            if (fallbackSetpoints[i] != states[i])
             {
-                if (fallbackSetpoints[i] != states[i])
-                {
-                    fallbackSetpoints[i] = states[i];
-                    fallbackActualStates[i] = states[i];
-                    if (onFallbackSectionChanged)
-                        onFallbackSectionChanged(static_cast<std::uint8_t>(i), states[i]);
-                }
+                fallbackSetpoints[i] = states[i];
+                fallbackActualStates[i] = states[i];
+                if (onFallbackSectionChanged)
+                    onFallbackSectionChanged(static_cast<std::uint8_t>(i), states[i]);
             }
-            return;
         }
 
         for (auto &pair : clients)
@@ -321,6 +370,9 @@ namespace isobus_vt
                 if (cur != next)
                 {
                     clientState.set_section_setpoint(i, next);
+                    // CRITICAL: Mirror setpoint directly to actual work state so AgOpenGPS receives confirmation
+                    // in Heartbeat (PGN 0xF0) and turns sections GREEN to paint!
+                    clientState.set_section_actual(i, next);
                     changed = true;
                 }
             }
@@ -433,20 +485,67 @@ namespace isobus_vt
         if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
             return false;
 
+        // 1. Główne gniazdo UDP Port 8888 (Odbiór od AgIO / sieci lokalnej)
         SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-        if (s == INVALID_SOCKET)
-            return false;
-
-        BOOL opt = TRUE;
-        setsockopt(s, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&opt), sizeof(opt));
-        setsockopt(s, SOL_SOCKET, SO_BROADCAST, reinterpret_cast<const char*>(&opt), sizeof(opt));
+        if (s != INVALID_SOCKET)
+        {
+            BOOL opt = TRUE;
+            setsockopt(s, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&opt), sizeof(opt));
+            setsockopt(s, SOL_SOCKET, SO_BROADCAST, reinterpret_cast<const char*>(&opt), sizeof(opt));
 
 #ifndef SIO_UDP_CONNRESET
 #define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
 #endif
-        BOOL bNewBehavior = FALSE;
-        DWORD dwBytesReturned = 0;
-        WSAIoctl(s, SIO_UDP_CONNRESET, &bNewBehavior, sizeof(bNewBehavior), NULL, 0, &dwBytesReturned, NULL, NULL);
+            BOOL bNewBehavior = FALSE;
+            DWORD dwBytesReturned = 0;
+            WSAIoctl(s, SIO_UDP_CONNRESET, &bNewBehavior, sizeof(bNewBehavior), NULL, 0, &dwBytesReturned, NULL, NULL);
+
+            u_long mode = 1;
+            ioctlsocket(s, FIONBIO, &mode);
+
+            sockaddr_in bindAddr{};
+            bindAddr.sin_family = AF_INET;
+            bindAddr.sin_port = htons(rxPort);
+            bindAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+            if (bind(s, reinterpret_cast<sockaddr*>(&bindAddr), sizeof(bindAddr)) != SOCKET_ERROR)
+            {
+                rxSocket = static_cast<std::uintptr_t>(s);
+            }
+            else
+            {
+                closesocket(s);
+            }
+        }
+
+        // 2. Bezpośrednie gniazdo UDP Port 17777 (Przechwytywanie komunikatów wysyłanych przez AgOpenGPS epAgIO na żywo bez AgIO!)
+        SOCKET sLoop = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (sLoop != INVALID_SOCKET)
+        {
+            BOOL opt = TRUE;
+            setsockopt(sLoop, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&opt), sizeof(opt));
+
+            BOOL bNewBehavior = FALSE;
+            DWORD dwBytesReturned = 0;
+            WSAIoctl(sLoop, SIO_UDP_CONNRESET, &bNewBehavior, sizeof(bNewBehavior), NULL, 0, &dwBytesReturned, NULL, NULL);
+
+            u_long mode = 1;
+            ioctlsocket(sLoop, FIONBIO, &mode);
+
+            sockaddr_in loopBind{};
+            loopBind.sin_family = AF_INET;
+            loopBind.sin_port = htons(17777);
+            loopBind.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+            if (bind(sLoop, reinterpret_cast<sockaddr*>(&loopBind), sizeof(loopBind)) != SOCKET_ERROR)
+            {
+                rxSocketLoopback = static_cast<std::uintptr_t>(sLoop);
+            }
+            else
+            {
+                closesocket(sLoop);
+            }
+        }
 
         // Detect local subnet (e.g. 192.168.68.x)
         char host[256];
@@ -475,24 +574,8 @@ namespace isobus_vt
             }
         }
 
-        // Non-blocking mode
-        u_long mode = 1;
-        ioctlsocket(s, FIONBIO, &mode);
-
-        sockaddr_in bindAddr{};
-        bindAddr.sin_family = AF_INET;
-        bindAddr.sin_port = htons(rxPort);
-        bindAddr.sin_addr.s_addr = htonl(INADDR_ANY);
-
-        if (bind(s, reinterpret_cast<sockaddr*>(&bindAddr), sizeof(bindAddr)) == SOCKET_ERROR)
-        {
-            closesocket(s);
-            return false;
-        }
-
-        rxSocket = static_cast<std::uintptr_t>(s);
-        running = true;
-        return true;
+        running = (rxSocket != ~0ULL || rxSocketLoopback != ~0ULL);
+        return running;
     }
 
     void AogUdpBridge::stop()
@@ -502,91 +585,251 @@ namespace isobus_vt
         {
             closesocket(static_cast<SOCKET>(rxSocket));
             rxSocket = ~0ULL;
-            WSACleanup();
+        }
+        if (rxSocketLoopback != ~0ULL)
+        {
+            closesocket(static_cast<SOCKET>(rxSocketLoopback));
+            rxSocketLoopback = ~0ULL;
+        }
+        WSACleanup();
+    }
+
+    static void ParseIncomingNmea(const char *buf, int len)
+    {
+        if (len < 10 || buf[0] != '$') return;
+        std::string line(buf, len);
+        auto nl = line.find_first_of("\r\n");
+        if (nl != std::string::npos) line = line.substr(0, nl);
+
+        std::vector<std::string> tokens;
+        std::stringstream ss(line);
+        std::string token;
+        while (std::getline(ss, token, ','))
+        {
+            tokens.push_back(token);
+        }
+        if (tokens.size() < 7) return;
+
+        std::string type = tokens[0];
+        if (type.size() >= 5) type = type.substr(type.size() - 3);
+
+        if (type == "GGA" && tokens.size() >= 10)
+        {
+            if (!tokens[2].empty() && !tokens[4].empty())
+            {
+                try
+                {
+                    double rawLat = std::stod(tokens[2]);
+                    double latDeg = std::floor(rawLat / 100.0);
+                    double latMin = rawLat - (latDeg * 100.0);
+                    double lat = latDeg + (latMin / 60.0);
+                    if (tokens[3] == "S") lat = -lat;
+
+                    double rawLon = std::stod(tokens[4]);
+                    double lonDeg = std::floor(rawLon / 100.0);
+                    double lonMin = rawLon - (lonDeg * 100.0);
+                    double lon = lonDeg + (lonMin / 60.0);
+                    if (tokens[5] == "W") lon = -lon;
+
+                    int fix = std::stoi(tokens[6]);
+                    int sats = tokens[7].empty() ? 0 : std::stoi(tokens[7]);
+                    float hdop = tokens[8].empty() ? 99.0f : std::stof(tokens[8]);
+                    double alt = tokens[9].empty() ? 0.0 : std::stod(tokens[9]);
+
+                    auto fixEnum = static_cast<GpsFixQuality>(fix);
+                    auto curTel = FieldNavigation::get_instance().get_telemetry();
+                    FieldNavigation::get_instance().update_gps_nmea(
+                        lat, lon, alt, curTel.speedKph, curTel.headingDeg, fixEnum, static_cast<uint8_t>(sats), hdop);
+                }
+                catch (...) {}
+            }
+        }
+        else if (type == "VTG" && tokens.size() >= 8)
+        {
+            try
+            {
+                float heading = tokens[1].empty() ? 0.0f : std::stof(tokens[1]);
+                float speedKph = tokens[7].empty() ? 0.0f : std::stof(tokens[7]);
+                auto curTel = FieldNavigation::get_instance().get_telemetry();
+                FieldNavigation::get_instance().update_gps_nmea(
+                    curTel.latitude, curTel.longitude, curTel.altitude, speedKph, heading, curTel.fixQuality, curTel.satellites, curTel.hdop);
+            }
+            catch (...) {}
         }
     }
 
     void AogUdpBridge::poll()
     {
-        if (!running || rxSocket == ~0ULL) return;
+        if (!running) return;
 
-        SOCKET s = static_cast<SOCKET>(rxSocket);
+        SOCKET socketsToPoll[2] = {
+            (rxSocket != ~0ULL) ? static_cast<SOCKET>(rxSocket) : INVALID_SOCKET,
+            (rxSocketLoopback != ~0ULL) ? static_cast<SOCKET>(rxSocketLoopback) : INVALID_SOCKET
+        };
+
         std::uint8_t buf[1024];
         sockaddr_in srcAddr{};
         int srcLen = sizeof(srcAddr);
 
-        while (true)
+        for (int sIdx = 0; sIdx < 2; ++sIdx)
         {
-            srcLen = sizeof(srcAddr);
-            int received = recvfrom(s, reinterpret_cast<char*>(buf), sizeof(buf), 0,
-                                    reinterpret_cast<sockaddr*>(&srcAddr), &srcLen);
-            if (received <= 0) break;
+            SOCKET s = socketsToPoll[sIdx];
+            if (s == INVALID_SOCKET) continue;
 
-            rxPackets++;
-            lastRxTimestamp = isobus::SystemTiming::get_timestamp_ms();
-
-            // Framing: 0x80 0x81 [src] [pgn] [len] [payload...] [crc]
-            if (received >= 6)
+            while (true)
             {
-                std::uint16_t header = (static_cast<std::uint16_t>(buf[0]) << 8) | buf[1];
-                if (header == PACKET_START)
+                srcLen = sizeof(srcAddr);
+                int received = recvfrom(s, reinterpret_cast<char*>(buf), sizeof(buf), 0,
+                                        reinterpret_cast<sockaddr*>(&srcAddr), &srcLen);
+                if (received <= 0) break;
+
+                rxPackets++;
+                lastRxTimestamp = isobus::SystemTiming::get_timestamp_ms();
+
+                // 1. Raw ASCII NMEA stream from AgIO ($GPGGA, $GNGGA, $GNVTG)
+                if (buf[0] == '$')
                 {
-                    std::uint8_t src = buf[2];
-                    std::uint8_t pgn = buf[3];
-                    std::uint8_t len = buf[4];
+                    ParseIncomingNmea(reinterpret_cast<const char*>(buf), received);
+                    continue;
+                }
 
-                    if (received >= len + 6)
+                // 2. Framing: 0x80 0x81 [src] [pgn] [len] [payload...] [crc]
+                if (received >= 6)
+                {
+                    std::uint16_t header = (static_cast<std::uint16_t>(buf[0]) << 8) | buf[1];
+                    if (header == PACKET_START)
                     {
-                        const std::uint8_t *payload = buf + 5;
+                        std::uint8_t src = buf[2];
+                        std::uint8_t pgn = buf[3];
+                        std::uint8_t len = buf[4];
 
-                        // 0xC9: Subnet Detection [0xC9, 0xC9, IP0, IP1, IP2]
-                        if (pgn == 0xC9 && len >= 5 && payload[0] == 0xC9 && payload[1] == 0xC9)
+                        if (received >= len + 6)
                         {
-                            subnet[0] = payload[2];
-                            subnet[1] = payload[3];
-                            subnet[2] = payload[4];
-                        }
-                        // 0xD6: GPS / Fix Quality
-                        else if (pgn == 0xD6 && len >= 39)
-                        {
-                            gpsFixQuality = payload[38];
-                        }
-                        // 0xE5: 64 Sections Setpoints Bitfield
-                        else if (pgn == 0xE5 && len >= 8)
-                        {
-                            std::vector<bool> secStates;
-                            secStates.reserve(64);
-                            for (std::uint8_t j = 0; j < 8; ++j)
+                            const std::uint8_t *payload = buf + 5;
+
+                            // 0xC9: Subnet Detection [0xC9, 0xC9, IP0, IP1, IP2]
+                            if (pgn == 0xC9 && len >= 5 && payload[0] == 0xC9 && payload[1] == 0xC9)
                             {
-                                for (std::uint8_t i = 0; i < 8; ++i)
-                                    secStates.push_back((payload[j] & (1 << i)) != 0);
+                                subnet[0] = payload[2];
+                                subnet[1] = payload[3];
+                                subnet[2] = payload[4];
                             }
-                            if (onSectionStatesReceived)
-                                onSectionStatesReceived(secStates);
-                        }
-                        // 0xF1: Section Control Mode
-                        else if (pgn == 0xF1 && len >= 1)
-                        {
-                            bool autoMode = (payload[0] == 1);
-                            if (onSectionControlModeReceived)
-                                onSectionControlModeReceived(autoMode);
-                        }
-                        // 0xF2: Process Data (Speed, Distance, XTE)
-                        else if (pgn == 0xF2 && len >= 6)
-                        {
-                            std::uint16_t ddi = static_cast<std::uint16_t>(payload[0]) | (static_cast<std::uint16_t>(payload[1]) << 8);
-                            std::int32_t val = static_cast<std::int32_t>(
-                                static_cast<std::uint32_t>(payload[2]) |
-                                (static_cast<std::uint32_t>(payload[3]) << 8) |
-                                (static_cast<std::uint32_t>(payload[4]) << 16) |
-                                (static_cast<std::uint32_t>(payload[5]) << 24));
-
-                            if (ddi == static_cast<std::uint16_t>(isobus::DataDescriptionIndex::ActualSpeed))
+                            // 0xD6: GPS / Fix Quality
+                            else if (pgn == 0xD6 && len >= 39)
                             {
-                                float speedKph = static_cast<float>(std::abs(val)) * 0.0036f; // mm/s to km/h
-                                gpsSpeedKph = speedKph;
-                                if (onSpeedReceived)
-                                    onSpeedReceived(speedKph, val);
+                                gpsFixQuality = payload[38];
+                            }
+                            // 0xFD: AutoSteer Board Feedback [Actual Angle, Roll, Switches]
+                            else if (pgn == 0xFD && len >= 6)
+                            {
+                                int16_t steerRaw = static_cast<int16_t>((payload[0] << 8) | payload[1]);
+                                float actualSteer = steerRaw * 0.01f;
+                                int16_t rollRaw = static_cast<int16_t>((payload[2] << 8) | payload[3]);
+                                float rollDeg = rollRaw * 0.1f;
+                                uint8_t sw = payload[4];
+                                bool steerSw = (sw & 1) != 0;
+                                bool workSw = (sw & 2) != 0;
+
+                                FieldNavigation::get_instance().update_steer_feedback(actualSteer, steerSw, workSw);
+                                FieldNavigation::get_instance().update_imu(rollDeg, 0.0f);
+                            }
+                            // 0xD3: IMU Sentence [Roll, Pitch]
+                            else if (pgn == 0xD3 && len >= 8)
+                            {
+                                int16_t rollRaw = static_cast<int16_t>((payload[0] << 8) | payload[1]);
+                                int16_t pitchRaw = static_cast<int16_t>((payload[2] << 8) | payload[3]);
+                                FieldNavigation::get_instance().update_imu(rollRaw * 0.1f, pitchRaw * 0.1f);
+                            }
+                            // 0xEB (235): Tool & Sections Geometry from AgOpenGPS (CPGN_EB)
+                            else if (pgn == 0xEB && len >= 33)
+                            {
+                                std::uint8_t nSec = payload[32];
+                                if (nSec > 0 && nSec <= 64)
+                                {
+                                    std::vector<float> widths;
+                                    widths.reserve(nSec);
+                                    float totalW = 0.0f;
+                                    for (std::uint8_t i = 0; i < nSec && i < 16; ++i)
+                                    {
+                                        std::uint16_t wCm = static_cast<std::uint16_t>(payload[i]) | (static_cast<std::uint16_t>(payload[16 + i]) << 8);
+                                        float wM = wCm * 0.01f;
+                                        widths.push_back(wM);
+                                        totalW += wM;
+                                    }
+                                    if (totalW > 0.5f && onToolGeometryReceived)
+                                    {
+                                        onToolGeometryReceived(totalW, nSec, widths);
+                                    }
+                                }
+                            }
+                            // 0xEF (239): Machine Data from AgOpenGPS (CPGN_EF - Speed, Hydraulic Lift, Sections 1..16)
+                            else if (pgn == 0xEF && len >= 7)
+                            {
+                                float spd = payload[1] * 0.1f;
+                                if (spd > 0.0f) gpsSpeedKph = spd;
+                                std::vector<bool> secStates;
+                                secStates.reserve(16);
+                                for (int i = 0; i < 8; ++i) secStates.push_back((payload[5] & (1 << i)) != 0);
+                                for (int i = 0; i < 8; ++i) secStates.push_back((payload[6] & (1 << i)) != 0);
+                                if (onSectionStatesReceived) onSectionStatesReceived(secStates);
+                            }
+                            // 0xE5 (229): 64 Sections Setpoints Bitfield + Tool Left/Right Speed
+                            else if (pgn == 0xE5 && len >= 8)
+                            {
+                                std::vector<bool> secStates;
+                                secStates.reserve(64);
+                                for (std::uint8_t j = 0; j < 8; ++j)
+                                {
+                                    for (std::uint8_t i = 0; i < 8; ++i)
+                                        secStates.push_back((payload[j] & (1 << i)) != 0);
+                                }
+                                if (onSectionStatesReceived)
+                                    onSectionStatesReceived(secStates);
+
+                                if (len >= 12)
+                                {
+                                    int16_t lSpd = static_cast<int16_t>(payload[8] | (payload[9] << 8));
+                                    int16_t rSpd = static_cast<int16_t>(payload[10] | (payload[11] << 8));
+                                    float spd = (std::abs(lSpd) + std::abs(rSpd)) * 0.05f;
+                                    if (spd > 0.0f) gpsSpeedKph = spd;
+                                }
+                            }
+                            // 0xF1: Section Control Mode
+                            else if (pgn == 0xF1 && len >= 1)
+                            {
+                                bool autoMode = (payload[0] == 1);
+                                if (onSectionControlModeReceived)
+                                    onSectionControlModeReceived(autoMode);
+                            }
+                            // 0xF2: Process Data (Speed, Distance, XTE)
+                            else if (pgn == 0xF2 && len >= 6)
+                            {
+                                std::uint16_t ddi = static_cast<std::uint16_t>(payload[0]) | (static_cast<std::uint16_t>(payload[1]) << 8);
+                                std::int32_t val = static_cast<std::int32_t>(
+                                    static_cast<std::uint32_t>(payload[2]) |
+                                    (static_cast<std::uint32_t>(payload[3]) << 8) |
+                                    (static_cast<std::uint32_t>(payload[4]) << 16) |
+                                    (static_cast<std::uint32_t>(payload[5]) << 24));
+
+                                if (ddi == static_cast<std::uint16_t>(isobus::DataDescriptionIndex::ActualSpeed))
+                                {
+                                    float speedKph = static_cast<float>(std::abs(val)) * 0.0036f; // mm/s to km/h
+                                    gpsSpeedKph = speedKph;
+                                    if (onSpeedReceived)
+                                        onSpeedReceived(speedKph, val);
+                                }
+                            }
+                            // 0xF3: Field Name from AgOpenGPS (UTF-8 string of active field directory / name)
+                            else if (pgn == 0xF3 && len > 0)
+                            {
+                                std::string aogField(reinterpret_cast<const char*>(payload), len);
+                                while (!aogField.empty() && (aogField.back() == '\0' || aogField.back() == '\r' || aogField.back() == '\n'))
+                                    aogField.pop_back();
+
+                                if (!aogField.empty() && onFieldNameReceived)
+                                {
+                                    onFieldNameReceived(aogField);
+                                }
                             }
                         }
                     }
@@ -610,7 +853,12 @@ namespace isobus_vt
 
         std::uint8_t bitfieldBytes = (numSections + 7) / 8;
         txBuf[idx++] = 2 + bitfieldBytes; // Length
-        txBuf[idx++] = autoMode ? 1 : 0;
+
+        // Critical AgOpenGPS CISOBUS.DeserializeHeartbeat compatibility:
+        // bit 0: sectionControlEnabled
+        // bits 1..7: numClients (MUST BE > 0, otherwise AgOpenGPS resets sections to 0 and disables painting!)
+        std::uint8_t clientsCount = 1;
+        txBuf[idx++] = static_cast<std::uint8_t>((clientsCount << 1) | (autoMode ? 1 : 0));
         txBuf[idx++] = numSections;
 
         for (std::uint8_t b = 0; b < bitfieldBytes; ++b)
@@ -628,7 +876,7 @@ namespace isobus_vt
         txBuf[idx] = calculate_crc(txBuf + 2, idx - 2);
         idx++;
 
-        // Send to loopback 127.0.0.1:9999
+        // 1. Send to loopback 127.0.0.1:9999 (AgIO)
         sockaddr_in loopAddr{};
         loopAddr.sin_family = AF_INET;
         loopAddr.sin_port = htons(txPort);
@@ -636,7 +884,15 @@ namespace isobus_vt
         sendto(s, reinterpret_cast<const char*>(txBuf), static_cast<int>(idx), 0,
                reinterpret_cast<sockaddr*>(&loopAddr), sizeof(loopAddr));
 
-        // Send to general broadcast 255.255.255.255:9999
+        // 2. Send directly to AgOpenGPS Loopback Server (127.0.0.1:15555) for instantaneous field painting
+        sockaddr_in aogLoopAddr{};
+        aogLoopAddr.sin_family = AF_INET;
+        aogLoopAddr.sin_port = htons(15555);
+        aogLoopAddr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        sendto(s, reinterpret_cast<const char*>(txBuf), static_cast<int>(idx), 0,
+               reinterpret_cast<sockaddr*>(&aogLoopAddr), sizeof(aogLoopAddr));
+
+        // 3. Send to general broadcast 255.255.255.255:9999
         sockaddr_in bcastAny{};
         bcastAny.sin_family = AF_INET;
         bcastAny.sin_port = htons(txPort);
@@ -644,7 +900,7 @@ namespace isobus_vt
         sendto(s, reinterpret_cast<const char*>(txBuf), static_cast<int>(idx), 0,
                reinterpret_cast<sockaddr*>(&bcastAny), sizeof(bcastAny));
 
-        // Send to LAN broadcast <subnet>.255:9999
+        // 4. Send to LAN broadcast <subnet>.255:9999
         sockaddr_in bcastAddr{};
         bcastAddr.sin_family = AF_INET;
         bcastAddr.sin_port = htons(txPort);
@@ -654,6 +910,115 @@ namespace isobus_vt
                reinterpret_cast<sockaddr*>(&bcastAddr), sizeof(bcastAddr));
 
         txPackets++;
+    }
+
+    void AogUdpBridge::send_work_switch_command(bool workActive)
+    {
+        if (!running || rxSocket == ~0ULL) return;
+
+        SOCKET s = static_cast<SOCKET>(rxSocket);
+
+        // 1. PGN 0xEA (234) - Switch Sentence do AgOpenGPS
+        // swMain:
+        // bit 1 (wartość 2) = Master Switch AUTO ON!
+        // bit 0 (wartość 1) = Master Switch OFF!
+        std::uint8_t txBuf[32];
+        std::size_t idx = 0;
+        txBuf[idx++] = 0x80;
+        txBuf[idx++] = 0x81;
+        txBuf[idx++] = 0x7F; // Machine / Switch Module
+        txBuf[idx++] = 0xEA; // PGN 0xEA (234)
+        txBuf[idx++] = 9;    // Długość 9
+        txBuf[idx++] = 0;    // swHeader
+        txBuf[idx++] = workActive ? 2 : 1; // swMain: 2 = Master Auto ON, 1 = Master OFF
+        txBuf[idx++] = 0;    // swAutoGr0
+        txBuf[idx++] = 0;    // swAutoGr1
+        txBuf[idx++] = 0;    // swNumSections
+        txBuf[idx++] = 0;    // swOnGr0
+        txBuf[idx++] = 0;    // swOffGr0
+        txBuf[idx++] = 0;    // swOnGr1
+        txBuf[idx++] = 0;    // swOffGr1
+        txBuf[idx] = calculate_crc(txBuf + 2, idx - 2);
+        idx++;
+
+        sockaddr_in loopAddr{};
+        loopAddr.sin_family = AF_INET;
+        loopAddr.sin_port = htons(txPort);
+        loopAddr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        sendto(s, reinterpret_cast<const char*>(txBuf), static_cast<int>(idx), 0,
+               reinterpret_cast<sockaddr*>(&loopAddr), sizeof(loopAddr));
+
+        sockaddr_in aogLoop{};
+        aogLoop.sin_family = AF_INET;
+        aogLoop.sin_port = htons(15555);
+        aogLoop.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        sendto(s, reinterpret_cast<const char*>(txBuf), static_cast<int>(idx), 0,
+               reinterpret_cast<sockaddr*>(&aogLoop), sizeof(aogLoop));
+
+        // 2. PGN 0xFD (253) - Sprzętowy stan przełącznika roboczego (AutoSteer / WorkSwitch High)
+        std::uint8_t fdBuf[32];
+        std::size_t fIdx = 0;
+        fdBuf[fIdx++] = 0x80;
+        fdBuf[fIdx++] = 0x81;
+        fdBuf[fIdx++] = 0x7E; // Steer Module
+        fdBuf[fIdx++] = 0xFD; // PGN 0xFD (253)
+        fdBuf[fIdx++] = 10;   // Długość 10
+        fdBuf[fIdx++] = 0;    // steerAngleHi
+        fdBuf[fIdx++] = 0;    // steerAngleLo
+        fdBuf[fIdx++] = 0;    // rollHi
+        fdBuf[fIdx++] = 0;    // rollLo
+        fdBuf[fIdx++] = workActive ? 0x02 : 0x00; // byte 4: bit 1 = work switch active
+        fdBuf[fIdx++] = 0;    // pwm
+        fdBuf[fIdx++] = workActive ? 0x01 : 0x00; // byte 11 w pakiecie (offset 5+6): workSwitchHigh bit 0 = 1!
+        fdBuf[fIdx++] = 0;
+        fdBuf[fIdx++] = 0;
+        fdBuf[fIdx++] = 0;
+        fdBuf[fIdx] = calculate_crc(fdBuf + 2, fIdx - 2);
+        fIdx++;
+
+        sendto(s, reinterpret_cast<const char*>(fdBuf), static_cast<int>(fIdx), 0,
+               reinterpret_cast<sockaddr*>(&aogLoop), sizeof(aogLoop));
+        sendto(s, reinterpret_cast<const char*>(fdBuf), static_cast<int>(fIdx), 0,
+               reinterpret_cast<sockaddr*>(&loopAddr), sizeof(loopAddr));
+    }
+
+    void AogUdpBridge::send_autosteer_command(bool engaged, float steerAngleDeg, float speedKph)
+    {
+        if (!running || rxSocket == ~0ULL) return;
+
+        SOCKET s = static_cast<SOCKET>(rxSocket);
+        std::uint8_t txBuf[32];
+        std::size_t idx = 0;
+
+        txBuf[idx++] = 0x80;
+        txBuf[idx++] = 0x81;
+        txBuf[idx++] = 0x7F; // Source: AgOpenGPS
+        txBuf[idx++] = 0xFE; // PGN 0xFE (254) - AutoSteer data command
+        txBuf[idx++] = 8;    // Length
+
+        std::uint16_t spd = static_cast<std::uint16_t>(std::clamp(speedKph * 10.0f, 0.0f, 65535.0f));
+        txBuf[idx++] = static_cast<std::uint8_t>((spd >> 8) & 0xFF);
+        txBuf[idx++] = static_cast<std::uint8_t>(spd & 0xFF);
+
+        txBuf[idx++] = engaged ? 1 : 0; // Bit 0: steer enable
+
+        std::int16_t angleRaw = static_cast<std::int16_t>(std::clamp(steerAngleDeg * 100.0f, -32768.0f, 32767.0f));
+        txBuf[idx++] = static_cast<std::uint8_t>((angleRaw >> 8) & 0xFF);
+        txBuf[idx++] = static_cast<std::uint8_t>(angleRaw & 0xFF);
+
+        txBuf[idx++] = 0; // tramline
+        txBuf[idx++] = 0; // spare
+        txBuf[idx++] = 0; // spare
+
+        txBuf[idx] = calculate_crc(txBuf + 2, idx - 2);
+        idx++;
+
+        sockaddr_in loopAddr{};
+        loopAddr.sin_family = AF_INET;
+        loopAddr.sin_port = htons(txPort);
+        loopAddr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        sendto(s, reinterpret_cast<const char*>(txBuf), static_cast<int>(idx), 0,
+               reinterpret_cast<sockaddr*>(&loopAddr), sizeof(loopAddr));
     }
 
     void AogUdpBridge::send_hardware_message(const std::string &text, std::uint8_t durationSec, std::uint8_t colour)
@@ -754,7 +1119,20 @@ namespace isobus_vt
 
         // 3. Create and initialize Terminal TC Server
         tcServer = std::make_shared<TerminalTCServer>(tcCF);
+        auto &tcLang = tcServer->get_language_command_interface();
+        tcLang.set_language_code("pl");
+        tcLang.set_country_code("PL");
+        tcLang.set_commanded_decimal_symbol(isobus::LanguageCommandInterface::DecimalSymbols::Comma);
+        tcLang.set_commanded_time_format(isobus::LanguageCommandInterface::TimeFormats::TwentyFourHour);
+        tcLang.set_commanded_date_format(isobus::LanguageCommandInterface::DateFormats::ddmmyyyy);
+        tcLang.set_commanded_distance_units(isobus::LanguageCommandInterface::DistanceUnits::Metric);
+        tcLang.set_commanded_area_units(isobus::LanguageCommandInterface::AreaUnits::Metric);
+        tcLang.set_commanded_volume_units(isobus::LanguageCommandInterface::VolumeUnits::Metric);
+        tcLang.set_commanded_mass_units(isobus::LanguageCommandInterface::MassUnits::Metric);
+        tcLang.set_commanded_generic_units(isobus::LanguageCommandInterface::UnitSystem::Metric);
+
         tcServer->initialize();
+        tcServer->install_safe_callbacks();
         tcServer->set_task_totals_active(false);
         tcServer->onFallbackSectionChanged = [this](std::uint8_t sec, bool state) {
             log_message("AgOpenGPS commanded Section " + std::to_string(sec + 1) + " -> " + (state ? "ON" : "OFF"));
@@ -762,23 +1140,29 @@ namespace isobus_vt
                 onSectionStateChanged(sec, state);
         };
 
-        // 4. Announce TC Functionalities via PGN 64654
+        // 4. Announce TC Functionalities via PGN 64654 (AEF TC-BAS, TC-GEO, TC-SC)
         tcFunctionalities = std::make_unique<isobus::ControlFunctionFunctionalities>(tcCF);
         tcFunctionalities->set_functionality_is_supported(
             isobus::ControlFunctionFunctionalities::Functionalities::TaskControllerBasicServer, 1, true);
         tcFunctionalities->set_functionality_is_supported(
-            isobus::ControlFunctionFunctionalities::Functionalities::TaskControllerGeoServer, 1, false);
+            isobus::ControlFunctionFunctionalities::Functionalities::TaskControllerGeoServer, 1, true);
+        tcFunctionalities->set_task_controller_geo_server_option_state(
+            isobus::ControlFunctionFunctionalities::TaskControllerGeoServerOptions::PolygonBasedPrescriptionMapsAreSupported, true);
         tcFunctionalities->set_functionality_is_supported(
             isobus::ControlFunctionFunctionalities::Functionalities::TaskControllerSectionControlServer, 1, true);
-        tcFunctionalities->set_task_controller_section_control_server_option_state(1, 64);
-        log_message("TC announced TC-BAS and TC-SC (1 boom / 64 sections) on CAN");
+        tcFunctionalities->set_task_controller_section_control_server_option_state(6, 128); // 6 booms / 128 sections for wide implements
+        log_message("TC announced TC-BAS, TC-GEO (Prescriptions) and TC-SC (6 booms / 128 sections) on CAN");
 
-        // 5. Announce TECU Functionalities and initialize Speed Messages Interface
+        // 5. Announce TECU Functionalities (Class 2 + Navigation + Guidance) and initialize Speed Messages Interface
         tecuFunctionalities = std::make_unique<isobus::ControlFunctionFunctionalities>(tecuCF);
         tecuFunctionalities->set_functionality_is_supported(
             isobus::ControlFunctionFunctionalities::Functionalities::BasicTractorECUServer, 2, true);
         tecuFunctionalities->set_basic_tractor_ECU_server_option_state(
-            isobus::ControlFunctionFunctionalities::BasicTractorECUOptions::Class1NoOptions, true);
+            isobus::ControlFunctionFunctionalities::BasicTractorECUOptions::Class2NoOptions, true);
+        tecuFunctionalities->set_basic_tractor_ECU_server_option_state(
+            isobus::ControlFunctionFunctionalities::BasicTractorECUOptions::NavigationOption, true);
+        tecuFunctionalities->set_basic_tractor_ECU_server_option_state(
+            isobus::ControlFunctionFunctionalities::BasicTractorECUOptions::GuidanceOption, true);
 
         speedMessagesInterface = std::make_unique<isobus::SpeedMessagesInterface>(tecuCF, true, true, true, false);
         speedMessagesInterface->initialize();
@@ -799,6 +1183,27 @@ namespace isobus_vt
         speedMessagesInterface->wheelBasedSpeedTransmitData.set_machine_direction_of_travel(isobus::MachineDirection::Forward);
         speedMessagesInterface->machineSelectedSpeedTransmitData.set_machine_direction_of_travel(isobus::MachineDirection::Forward);
         log_message("TECU Speed Interface initialized");
+
+        // 5b. ISO 11783-7 Time & Date Interface (PGN 65254 / 0xFEE6)
+        timeDateInterface = std::make_unique<isobus::TimeDateInterface>(tecuCF, [](isobus::TimeDateInterface::TimeAndDate &td) {
+            SYSTEMTIME st;
+            GetSystemTime(&st);
+            td.year = st.wYear;
+            td.month = static_cast<std::uint8_t>(st.wMonth);
+            td.day = static_cast<std::uint8_t>(st.wDay);
+            td.hours = static_cast<std::uint8_t>(st.wHour);
+            td.minutes = static_cast<std::uint8_t>(st.wMinute);
+            td.seconds = static_cast<std::uint8_t>(st.wSecond);
+            td.milliseconds = static_cast<std::uint16_t>((st.wMilliseconds / 250) * 250);
+
+            TIME_ZONE_INFORMATION tzi;
+            GetTimeZoneInformation(&tzi);
+            td.localHourOffset = static_cast<std::int8_t>((-tzi.Bias) / 60);
+            td.localMinuteOffset = static_cast<std::int8_t>((-tzi.Bias) % 60);
+            return true;
+        });
+        timeDateInterface->initialize();
+        log_message("TECU Time/Date Interface (PGN 65254) initialized");
 
         // 6. Create UDP Bridge for AgOpenGPS / AgIO
         udpBridge = std::make_shared<AogUdpBridge>();
@@ -842,25 +1247,143 @@ namespace isobus_vt
             }
         };
 
+        // Direct AgOpenGPS hooks for field name, tool geometry and auto-configuration
+        udpBridge->onFieldNameReceived = [this](const std::string &fn) {
+            TcBasReportManager::get_instance().set_field_name_from_aog(fn);
+            log_message("AgOpenGPS aktywne pole: '" + fn + "'");
+        };
+
+        udpBridge->onToolGeometryReceived = [this](float widthM, std::uint8_t nSec, const std::vector<float>& widths) {
+            if (widthM > 0.5f)
+            {
+                auto &tcBas = TcBasReportManager::get_instance();
+                tcBas.get_current_task().implementWidthMeters = widthM;
+                tcBas.get_current_task().implementSectionsCount = nSec;
+                tcBas.get_current_task().implementName = "AgOpenGPS (" + std::to_string(static_cast<int>(widthM + 0.5f)) + "m, " + std::to_string(nSec) + " sekcji)";
+                tcBas.set_last_aog_sync_info("AgOpenGPS Live UDP: " + std::to_string(static_cast<int>(widthM + 0.5f)) + "m robocze, " + std::to_string(nSec) + " sekcji");
+                if (tcServer)
+                {
+                    tcServer->set_fallback_sections_count(nSec);
+                }
+                log_message("AgOpenGPS Belka PGN 0xEB: " + std::to_string(widthM) + " m, " + std::to_string(nSec) + " sekcji");
+            }
+        };
+
+        // Wykonaj bezpośrednie wstępne skanowanie profili AgOpenGPS
+        TcBasReportManager::get_instance().scan_and_sync_agopengps();
+        if (tcServer)
+        {
+            int initialSecs = TcBasReportManager::get_instance().get_current_task().implementSectionsCount;
+            if (initialSecs > 0)
+            {
+                tcServer->set_fallback_sections_count(static_cast<std::uint8_t>(initialSecs));
+            }
+        }
+
         log_message("TC Server & TECU online on ISOBUS channel " + std::to_string(canChannelIndex));
         return true;
     }
 
     void TaskControllerManager::update()
     {
+        std::uint32_t now = isobus::SystemTiming::get_timestamp_ms();
+
+        // 1. Cykliczny auto-skan plików AgOpenGPS (Profil maszyny / pole / sekcje) co 1.5 sekundy
+        static std::uint32_t lastAogScanTick = 0;
+        if (now - lastAogScanTick >= 1500)
+        {
+            lastAogScanTick = now;
+            TcBasReportManager::get_instance().scan_and_sync_agopengps();
+            if (tcServer)
+            {
+                int aogSecs = TcBasReportManager::get_instance().get_current_task().implementSectionsCount;
+                if (aogSecs > 0 && tcServer->get_total_sections() < aogSecs)
+                {
+                    tcServer->set_fallback_sections_count(static_cast<std::uint8_t>(aogSecs));
+                }
+            }
+        }
+
         if (udpBridge)
         {
             udpBridge->poll();
 
-            // Send 100 ms heartbeat PGN 0xF0 to AgOpenGPS / AgIO
-            std::uint32_t now = isobus::SystemTiming::get_timestamp_ms();
-            if (now - lastHeartbeatMs >= 100)
+            // Send 50 ms heartbeat PGN 0xF0 to AgOpenGPS / AgIO (20 Hz dla stabilnego malowania i braku timeoutu 1.0s)
+            if (now - lastHeartbeatMs >= 50)
             {
                 lastHeartbeatMs = now;
                 bool autoMode = tcServer ? tcServer->is_auto_mode() : true;
                 std::uint8_t nSec = tcServer ? tcServer->get_total_sections() : 0;
+                int aogSec = TcBasReportManager::get_instance().get_current_task().implementSectionsCount;
+                if (aogSec > 0 && (nSec == 0 || nSec < aogSec))
+                {
+                    nSec = static_cast<std::uint8_t>(aogSec);
+                    if (tcServer) tcServer->set_fallback_sections_count(nSec);
+                }
+                if (nSec == 0) nSec = 8; // Domyślnie 8 sekcji dla belki 28m
+
                 std::vector<bool> actual = tcServer ? tcServer->get_actual_section_states() : std::vector<bool>();
-                udpBridge->send_heartbeat(autoMode, nSec, actual);
+                if (actual.size() < nSec) actual.resize(nSec, false);
+                
+                // Sprawdź warunek roboczy traktora (TUZ opuszczony / WOM aktywny / wymuszenie w UI)
+                bool workActive = TractorEcuManager::get_instance().is_work_active() || forcePaint;
+                if (workActive)
+                {
+                    // Malowanie wymuszone / stan roboczy: wszystkie sekcje aktywne
+                    std::fill(actual.begin(), actual.end(), true);
+                    if (tcServer)
+                    {
+                        for (std::uint8_t s = 0; s < actual.size(); ++s)
+                            tcServer->set_fallback_section_state(s, true);
+                    }
+                }
+                else
+                {
+                    // Tryb Auto: pobierz setpointy wysłane przez AgOpenGPS (PGN 0xE5) i potwierdź je w stanie actual,
+                    // dzięki czemu AgOpenGPS widzi, że sekcja faktycznie pryska i maluje mapę na zielono!
+                    auto setpoints = tcServer ? tcServer->get_setpoint_section_states() : std::vector<bool>();
+                    for (std::size_t i = 0; i < actual.size() && i < setpoints.size(); ++i)
+                    {
+                        if (setpoints[i])
+                        {
+                            actual[i] = true;
+                        }
+                    }
+                }
+
+                udpBridge->send_heartbeat(autoMode, static_cast<std::uint8_t>(actual.size()), actual);
+            }
+
+            // Send 100 ms Work Switch Command (PGN 0xEA + 0xFD) to AgOpenGPS to synchronize Master work switch
+            static std::uint32_t lastWorkSendMs = 0;
+            if (now - lastWorkSendMs >= 100)
+            {
+                lastWorkSendMs = now;
+                bool workActive = TractorEcuManager::get_instance().is_work_active() || forcePaint;
+                if (tcServer)
+                {
+                    auto actual = tcServer->get_actual_section_states();
+                    for (bool b : actual) if (b) { workActive = true; break; }
+                }
+                udpBridge->send_work_switch_command(workActive);
+            }
+
+            // Send 50 ms AutoSteer guidance command (PGN 0xFE) to AgIO
+            static std::uint32_t lastSteerSendMs = 0;
+            if (now - lastSteerSendMs >= 50)
+            {
+                lastSteerSendMs = now;
+                auto &nav = FieldNavigation::get_instance();
+                auto &steer = nav.get_autosteer();
+                auto tel = nav.get_telemetry();
+                udpBridge->send_autosteer_command(steer.is_engaged(), steer.get_target_steer_angle(), tel.speedKph);
+            }
+
+            if (tcServer)
+            {
+                std::uint8_t totalSec = tcServer->get_total_sections();
+                std::vector<bool> actual = tcServer->get_actual_section_states();
+                FieldNavigation::get_instance().get_coverage().update_sections_from_tc(totalSec, actual);
             }
         }
 
@@ -874,13 +1397,83 @@ namespace isobus_vt
                 log_message(std::string("Task Controller Task State: ") +
                             (aogConnected ? "ACTIVE (AOG Field Running)" : "INACTIVE (Waiting for AOG)"));
             }
-            tcServer->update();
+            safe_update_tc(tcServer.get());
         }
 
-        // Only broadcast TECU Speed (0xFE48 / 0xFE49) when AgOpenGPS is actively connected and providing live speed
-        if (speedMessagesInterface && aogConnected)
+        // Live accumulation for TC-BAS (ISO 11783-10) and Ewidencja ŚOR (2027)
+        static std::uint32_t lastTcBasUpdateMs = 0;
+        std::uint32_t currentTickMs = isobus::SystemTiming::get_timestamp_ms();
+        if (lastTcBasUpdateMs == 0) lastTcBasUpdateMs = currentTickMs;
+        float dtSec = (currentTickMs - lastTcBasUpdateMs) / 1000.0f;
+        lastTcBasUpdateMs = currentTickMs;
+
+        if (dtSec > 0.0f && dtSec < 1.0f)
+        {
+            float speedKph = get_speed_kph();
+            if (speedKph <= 0.05f)
+            {
+                auto tel = TractorEcuManager::get_instance().get_telemetry();
+                if (tel.groundSpeedKph > 0.05f) speedKph = tel.groundSpeedKph;
+                else if (tel.wheelSpeedKph > 0.05f) speedKph = tel.wheelSpeedKph;
+            }
+
+            float sectionRatio = 0.0f;
+            bool workActive = TractorEcuManager::get_instance().is_work_active() || forcePaint;
+
+            if (tcServer)
+            {
+                auto actual = tcServer->get_actual_section_states();
+                if (!actual.empty())
+                {
+                    int onCount = 0;
+                    for (bool b : actual) if (b) onCount++;
+                    sectionRatio = static_cast<float>(onCount) / static_cast<float>(actual.size());
+                }
+                else if (tcServer->is_auto_mode() && aogConnected)
+                {
+                    sectionRatio = 1.0f;
+                }
+            }
+            else if (aogConnected)
+            {
+                sectionRatio = 1.0f;
+            }
+
+            if (sectionRatio <= 0.0f && workActive)
+            {
+                sectionRatio = 1.0f;
+            }
+
+            TcBasReportManager::get_instance().update_work_data(speedKph, sectionRatio, dtSec);
+        }
+
+        // Broadcast TECU Speed (0xFE48 / 0xFE49) periodically (10 Hz)
+        if (speedMessagesInterface)
         {
             speedMessagesInterface->update();
+        }
+
+        // Periodic ISO 11783-7 Time & Date broadcast (1 Hz)
+        static std::uint32_t lastTimeDateTx = 0;
+        if (isobus::SystemTiming::time_expired_ms(lastTimeDateTx, 1000) && timeDateInterface)
+        {
+            lastTimeDateTx = isobus::SystemTiming::get_timestamp_ms();
+            isobus::TimeDateInterface::TimeAndDate td;
+            SYSTEMTIME st;
+            GetSystemTime(&st);
+            td.year = st.wYear;
+            td.month = static_cast<std::uint8_t>(st.wMonth);
+            td.day = static_cast<std::uint8_t>(st.wDay);
+            td.hours = static_cast<std::uint8_t>(st.wHour);
+            td.minutes = static_cast<std::uint8_t>(st.wMinute);
+            td.seconds = static_cast<std::uint8_t>(st.wSecond);
+            td.milliseconds = static_cast<std::uint16_t>((st.wMilliseconds / 250) * 250);
+
+            TIME_ZONE_INFORMATION tzi;
+            GetTimeZoneInformation(&tzi);
+            td.localHourOffset = static_cast<std::int8_t>((-tzi.Bias) / 60);
+            td.localMinuteOffset = static_cast<std::int8_t>((-tzi.Bias) % 60);
+            timeDateInterface->send_time_and_date(td);
         }
     }
 
@@ -891,6 +1484,7 @@ namespace isobus_vt
             udpBridge->stop();
             udpBridge.reset();
         }
+        timeDateInterface.reset();
         speedMessagesInterface.reset();
         tcFunctionalities.reset();
         tecuFunctionalities.reset();

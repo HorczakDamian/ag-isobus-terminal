@@ -95,7 +95,16 @@ namespace isobus_vt
                 else if (key == "auto_reconnect") config.autoReconnect = (std::stoi(val) != 0);
 
                 // [VT]
-                else if (key == "version") config.vtVersion = std::max(2, std::min(6, std::stoi(val)));
+                else if (key == "version")
+                {
+                    int v = std::stoi(val);
+                    if (v >= 0 && v <= 1)
+                        config.vtVersion = (v == 0) ? 2 : 3; // map old enum 0/1 to version 2/3
+                    else if (v >= 2 && v <= 6)
+                        config.vtVersion = v;
+                    else
+                        config.vtVersion = 4;
+                }
                 else if (key == "data_mask_size")
                 {
                     config.dataMaskSize = std::max(60, std::min(1920, std::stoi(val)));
@@ -127,6 +136,10 @@ namespace isobus_vt
                 else if (key == "aog_tx_port") config.aogTxPort = std::stoi(val);
                 else if (key == "aog_subnet") config.aogSubnet = val;
                 else if (key == "auto_sections") config.autoBoomSections = (std::stoi(val) != 0);
+
+                // [Layout]
+                else if (key == "split_ratio") config.splitRatio = std::max(0.15f, std::min(0.85f, std::stof(val)));
+                else if (key == "active_tab") config.activeRightTab = std::max(0, std::min(5, std::stoi(val)));
 
                 // [Panels]
                 else if (key == "show_aog_tc") config.showAogTcWindow = (std::stoi(val) != 0);
@@ -203,6 +216,10 @@ namespace isobus_vt
             out << "aog_tx_port=" << config.aogTxPort << "\n";
             out << "aog_subnet=" << config.aogSubnet << "\n";
             out << "auto_sections=" << (config.autoBoomSections ? 1 : 0) << "\n\n";
+
+            out << "[Layout]\n";
+            out << "split_ratio=" << config.splitRatio << "\n";
+            out << "active_tab=" << config.activeRightTab << "\n\n";
 
             out << "[Panels]\n";
             out << "show_aog_tc=" << (config.showAogTcWindow ? 1 : 0) << "\n";

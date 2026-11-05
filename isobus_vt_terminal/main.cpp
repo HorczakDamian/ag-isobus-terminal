@@ -1,6 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <shellapi.h>
 #include <d3d11.h>
 #include <tchar.h>
 #include <dbghelp.h>
@@ -18,6 +19,8 @@
 #include "TerminalSettings.hpp"
 #include "SplashScreen.hpp"
 #include "AudioBeeper.hpp"
+#include "TractorEcuManager.hpp"
+#include "TcBasReportManager.hpp"
 
 #include "isobus/isobus/can_network_manager.hpp"
 #include "isobus/isobus/can_stack_logger.hpp"
@@ -342,27 +345,45 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
     ImGuiIO& io = ImGui::GetIO(); (void)io;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
-    // Load TrueType fonts for crisp, non-blurry ISOBUS rendering
+    // Load TrueType fonts for crisp, non-blurry ISOBUS rendering with full Polish diacritics
+    static const ImWchar glyphRangesPolish[] =
+    {
+        0x0020, 0x00FF, // Basic Latin + Latin Supplement (ó, Ó, etc.)
+        0x0100, 0x017F, // Latin Extended-A (ą, ć, ę, ł, ń, ś, ź, ż, Ą, Ć, Ę, Ł, Ń, Ś, Ź, Ż)
+        0x0180, 0x024F, // Latin Extended-B
+        0x2010, 0x205E, // General Punctuation
+        0x2190, 0x21FF, // Arrows
+        0x25A0, 0x25FF, // Geometric Shapes (▶, ⏸, ⏹, etc.)
+        0
+    };
+
     ImFontConfig fontConfig;
     fontConfig.OversampleH = 3;
     fontConfig.OversampleV = 3;
     fontConfig.PixelSnapH = true;
+    fontConfig.GlyphRanges = glyphRangesPolish;
 
     ImFont* fontRegular = nullptr;
     ImFont* fontMedium  = nullptr;
     ImFont* fontLarge   = nullptr;
 
-    if (std::filesystem::exists("C:\\Windows\\Fonts\\consola.ttf"))
+    if (std::filesystem::exists("C:\\Windows\\Fonts\\segoeui.ttf"))
     {
-        fontRegular = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\consola.ttf", 15.0f, &fontConfig);
-        fontMedium  = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\consolab.ttf", 22.0f, &fontConfig);
-        fontLarge   = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\consolab.ttf", 34.0f, &fontConfig);
+        fontRegular = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 16.0f, &fontConfig, glyphRangesPolish);
+        fontMedium  = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeuib.ttf", 22.0f, &fontConfig, glyphRangesPolish);
+        fontLarge   = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeuib.ttf", 34.0f, &fontConfig, glyphRangesPolish);
     }
-    else if (std::filesystem::exists("C:\\Windows\\Fonts\\segoeui.ttf"))
+    else if (std::filesystem::exists("C:\\Windows\\Fonts\\arial.ttf"))
     {
-        fontRegular = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 15.0f, &fontConfig);
-        fontMedium  = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeuib.ttf", 22.0f, &fontConfig);
-        fontLarge   = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeuib.ttf", 34.0f, &fontConfig);
+        fontRegular = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\arial.ttf", 16.0f, &fontConfig, glyphRangesPolish);
+        fontMedium  = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\arialbd.ttf", 22.0f, &fontConfig, glyphRangesPolish);
+        fontLarge   = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\arialbd.ttf", 34.0f, &fontConfig, glyphRangesPolish);
+    }
+    else if (std::filesystem::exists("C:\\Windows\\Fonts\\consola.ttf"))
+    {
+        fontRegular = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\consola.ttf", 16.0f, &fontConfig, glyphRangesPolish);
+        fontMedium  = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\consolab.ttf", 22.0f, &fontConfig, glyphRangesPolish);
+        fontLarge   = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\consolab.ttf", 34.0f, &fontConfig, glyphRangesPolish);
     }
     else
     {
@@ -384,6 +405,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
     // Setup Platform/Renderer backends
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
+    isobus_vt::TractorEcuManager::get_instance().set_d3d_device(g_pd3dDevice);
 
     // --- Initialize ISOBUS Stack ---
     isobus::CANStackLogger::set_can_stack_logger_sink(g_TerminalLogger.get());
@@ -427,6 +449,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
     bool showAogTcWindow = cfg.showAogTcWindow;
     bool showDiagnosticsWindow = cfg.showDiagnosticsWindow;
     bool showMiniViewsWindow = cfg.showMiniViewsWindow;
+    bool showTractorWindow = true;
+    bool showTractorPgnConfig = false;
+    isobus_vt::TractorEcuManager::get_instance().start();
     static bool g_TriggerResetLayout = false;
     bool alarmSoundMuted = cfg.alarmSoundMuted;
     float uiTouchScale = cfg.uiTouchScale;
@@ -470,6 +495,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
         vtServer->run_update();
         auxManager->update();
         tcManager->update();
+        isobus_vt::TractorEcuManager::get_instance().update();
 
         // Auto-select active working set if none is active and an object pool is ready
         if (!vtServer->get_active_ws())
@@ -687,12 +713,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
             // Menu: Panels
             if (ImGui::BeginMenu("Panels"))
             {
-                ImGui::MenuItem("AgOpenGPS Task Controller", nullptr, &showAogTcWindow);
+                ImGui::MenuItem("Task Controller & Ewidencja ŚOR (TC-BAS / SC)", nullptr, &showAogTcWindow);
                 ImGui::MenuItem("AUX-N Control Center", nullptr, &showAuxWindow);
                 ImGui::MenuItem("CAN Bus Monitor", nullptr, &showCanLogWindow);
                 ImGui::MenuItem("Working Set Inspector", nullptr, &showWsInspector);
                 ImGui::MenuItem("Machine Diagnostics (DM1 / DM2)", nullptr, &showDiagnosticsWindow);
                 ImGui::MenuItem("Podglad Maszyn w Tle (Mini-Views)", nullptr, &showMiniViewsWindow);
+                ImGui::Separator();
+                ImGui::MenuItem("Telemetria Ciagnika (TUZ / WOM / Silnik)", nullptr, &showTractorWindow);
+                ImGui::MenuItem("Konfiguracja PGN Ciagnika (2. PCAN)", nullptr, &showTractorPgnConfig);
                 ImGui::EndMenu();
             }
 
@@ -771,6 +800,48 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
                             tcManager->is_auto_mode() ? "AUTO" : "MANUAL");
                 ImGui::Text("Speed: %.1f km/h", tcManager->get_speed_kph());
                 ImGui::EndTooltip();
+            }
+
+            // Tractor TECU Status badge
+            bool tecuConnected = isobus_vt::TractorEcuManager::get_instance().is_connected();
+            auto tecuTel = isobus_vt::TractorEcuManager::get_instance().get_telemetry();
+            bool tecuLive = tecuConnected && (tecuTel.totalFramesReceived > 0);
+            if (tecuLive)
+            {
+                ImVec4 tecuCol = tecuTel.isWorkConditionMet ? ImVec4(0.20f, 0.90f, 0.45f, 1.0f) : ImVec4(0.40f, 0.80f, 1.0f, 1.0f);
+                ImGui::TextColored(tecuCol, "[ TECU: %s ]", tecuTel.isWorkConditionMet ? "PRACA" : "OK");
+            }
+            else
+            {
+                ImGui::TextColored(ImVec4(0.55f, 0.60f, 0.70f, 1.0f), "[ TECU: Czuwanie ]");
+            }
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::BeginTooltip();
+                ImGui::TextUnformatted("Tractor ECU (J1939 / ISO 11783-7)");
+                ImGui::Separator();
+                ImGui::Text("TUZ: %.1f%% (%s)", tecuTel.rearHitchPositionPct, tecuTel.isRearHitchLowered ? "Opuszczony" : "Podniesiony");
+                ImGui::Text("WOM: %.0f RPM (%s)", tecuTel.rearPtoRpm, tecuTel.isRearPtoActive ? "Zalaczony" : "Wylaczony");
+                ImGui::Text("Silnik: %.0f RPM | Spalanie: %.1f l/h", tecuTel.engineRpm, tecuTel.fuelRateLitersPerHour);
+                ImGui::Text("Szyna: %s", isobus_vt::TractorEcuManager::get_instance().get_status_string().c_str());
+                ImGui::EndTooltip();
+            }
+
+            // VT Version badge
+            {
+                const auto &cfg = isobus_vt::TerminalSettings::get_instance().get_config();
+                ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.0f, 1.0f), "[ VT: v%d ]", cfg.vtVersion);
+                if (ImGui::IsItemHovered())
+                {
+                    ImGui::BeginTooltip();
+                    ImGui::Text("ISO 11783-6 Virtual Terminal Version %d", cfg.vtVersion);
+                    ImGui::Separator();
+                    ImGui::Text("Data Mask: %d x %d px", cfg.dataMaskWidth, cfg.dataMaskHeight);
+                    ImGui::Text("Soft Keys: %d kol. x %d wierszy (%d x %d px)",
+                                cfg.skColumns, cfg.skRows, cfg.skDescWidth, cfg.skDescHeight);
+                    ImGui::Text("Liczba klawiszy: %d (F1..F%d)", cfg.skColumns * cfg.skRows, cfg.skColumns * cfg.skRows);
+                    ImGui::EndTooltip();
+                }
             }
 
             // Real-time Digital System Clock
@@ -1168,81 +1239,855 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
             ImGui::End();
         }
 
-        // 6. AgOpenGPS Task Controller & Section Control Window
+        // 6. AgOpenGPS Task Controller (TC-BAS & TC-SC) | Ewidencja ŚOR 2027
         if (showAogTcWindow && !g_isHudMode)
         {
             if (g_TriggerResetLayout)
             {
                 ImGui::SetNextWindowPos(ImVec2(rightColX, 36.0f), ImGuiCond_Always);
-                ImGui::SetNextWindowSize(ImVec2(rightColW, 360.0f), ImGuiCond_Always);
+                ImGui::SetNextWindowSize(ImVec2(std::max(rightColW, 520.0f), 560.0f), ImGuiCond_Always);
                 ImGui::SetNextWindowCollapsed(false, ImGuiCond_Always);
             }
             else
             {
                 ImGui::SetNextWindowPos(ImVec2(rightColX, 36.0f), ImGuiCond_FirstUseEver);
-                ImGui::SetNextWindowSize(ImVec2(rightColW, 360.0f), ImGuiCond_FirstUseEver);
+                ImGui::SetNextWindowSize(ImVec2(std::max(rightColW, 520.0f), 560.0f), ImGuiCond_FirstUseEver);
                 ImGui::SetNextWindowCollapsed(false, ImGuiCond_Appearing);
             }
-            ImGui::Begin("AgOpenGPS Task Controller (TC)", &showAogTcWindow, ImGuiWindowFlags_NoCollapse);
+
+            ImGui::Begin("Task Controller (TC-BAS & SC) | Ewidencja ŚOR 2027###AogTcWindow", &showAogTcWindow, ImGuiWindowFlags_NoCollapse);
+
+            auto &tcBas = isobus_vt::TcBasReportManager::get_instance();
+            auto &curTask = tcBas.get_current_task();
+            auto &profile = tcBas.get_farm_profile();
+            auto &catalog = isobus_vt::SorCatalog::get_instance();
             bool aogActive = tcManager->is_aog_connected();
+
+            // Status bar header
             if (aogActive)
             {
-                ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "[ AGOPENGPS CONNECTED ]");
+                ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "[ AGOPENGPS POŁĄCZONY ]");
             }
             else
             {
-                ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "[ WAITING FOR AGOPENGPS / AGIO (UDP 8888) ]");
+                ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "[ OCZEKIWANIE NA AGOPENGPS (UDP 8888) ]");
+            }
+            ImGui::SameLine();
+            if (curTask.isRunning)
+            {
+                if (curTask.isPaused)
+                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "| [ PAUZA ]");
+                else
+                    ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "| [ REJESTRACJA W TOKU ]");
+            }
+            else
+            {
+                ImGui::TextDisabled("| [ BRAK AKTYWNEGO ZABIEGU ]");
             }
 
             ImGui::SameLine();
-            ImGui::TextDisabled("| Subnet: %s", tcManager->get_udp_bridge() ? tcManager->get_udp_bridge()->get_subnet_string().c_str() : "unknown");
+            ImGui::TextDisabled("| Baza ŚOR: %zu preparatów", catalog.count());
 
             ImGui::Separator();
-            ImGui::Columns(3, "AogInfoCols", false);
-            ImGui::Text("Mode: %s", tcManager->is_auto_mode() ? "AUTOMATIC" : "MANUAL");
-            ImGui::NextColumn();
-            ImGui::Text("GPS Speed: %.1f km/h", tcManager->get_speed_kph());
-            ImGui::NextColumn();
-            ImGui::Text("Fix Quality: %u", tcManager->get_udp_bridge() ? tcManager->get_udp_bridge()->get_gps_fix_quality() : 0);
-            ImGui::Columns(1);
 
-            ImGui::Separator();
-            std::uint8_t nSections = tcManager->get_num_sections();
-            if (nSections > 0)
+            // Direct AgOpenGPS Sync Banner
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.35f, 0.9f, 0.95f, 1.0f));
+            ImGui::Text(">> %s", tcBas.get_last_aog_sync_info().c_str());
+            ImGui::PopStyleColor();
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Odśwież z AgOpenGPS (Profil/Pole)"))
             {
-                auto setpoints = tcManager->get_section_setpoints();
-                auto actualStates = tcManager->get_section_states();
-
-                ImGui::Text("Implement Sections (%u detected in DDOP - Auto AgOpenGPS):", nSections);
-                for (std::uint8_t i = 0; i < nSections; ++i)
+                tcBas.scan_and_sync_agopengps();
+                if (tcManager && tcManager->get_tc_server())
                 {
-                    if (i > 0 && (i % 8 != 0)) ImGui::SameLine();
-                    bool actOn = (i < actualStates.size()) && actualStates[i];
-                    bool spOn  = (i < setpoints.size()) && setpoints[i];
-                    bool on    = actOn || spOn;
-
-                    ImVec4 col = on ? ImVec4(0.2f, 0.85f, 0.3f, 1.0f) : ImVec4(0.45f, 0.45f, 0.50f, 1.0f);
-                    ImGui::TextColored(col, "[Sec %u: %s]", i + 1, on ? "ON" : "OFF");
+                    int aogSec = curTask.implementSectionsCount;
+                    if (aogSec > 0) tcManager->get_tc_server()->set_fallback_sections_count(static_cast<std::uint8_t>(aogSec));
                 }
+                isobus_vt::TerminalSettings::get_instance().play_touch_beep();
+            }
+
+            ImGui::SameLine();
+            bool isForce = tcManager->is_force_paint();
+            if (isForce)
+            {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.1f, 0.7f, 0.2f, 1.0f));
+                if (ImGui::SmallButton("✔ WYMUŚ MALOWANIE: WŁĄCZONE (AgOpenGPS)"))
+                {
+                    tcManager->set_force_paint(false);
+                    isobus_vt::TerminalSettings::get_instance().play_touch_beep();
+                }
+                ImGui::PopStyleColor();
             }
             else
             {
-                ImGui::TextDisabled("No Implement Sections registered yet. Connect implement to ISOBUS.");
+                if (ImGui::SmallButton("⚡ Wymuś malowanie w AgOpenGPS (Manual ON)"))
+                {
+                    tcManager->set_force_paint(true);
+                    isobus_vt::TerminalSettings::get_instance().play_touch_beep();
+                }
+            }
+
+            ImGui::SameLine();
+            bool workActive = isobus_vt::TractorEcuManager::get_instance().is_work_active() || isForce;
+            if (isForce)
+            {
+                ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.3f, 1.0f), "| [MALOWANIE: WYMUSZONE]");
+            }
+            else if (workActive)
+            {
+                ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.3f, 1.0f), "| [MALOWANIE: AKTYWNE (TUZ/WOM)]");
+            }
+            else
+            {
+                ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "| [MALOWANIE: TRYB AUTO (AOG SC)]");
+            }
+
+            // Podgląd aktywnych sekcji belki opryskiwacza
+            auto secStates = tcManager->get_section_states();
+            if (!secStates.empty())
+            {
+                ImGui::SameLine();
+                ImGui::TextDisabled("| Sekcje:");
+                ImGui::SameLine();
+                for (size_t s = 0; s < secStates.size() && s < 16; ++s)
+                {
+                    bool on = secStates[s] || workActive;
+                    ImVec4 col = on ? ImVec4(0.15f, 0.90f, 0.35f, 1.0f) : ImVec4(0.35f, 0.35f, 0.40f, 1.0f);
+                    ImGui::TextColored(col, "[%zu]", s + 1);
+                    if (s + 1 < secStates.size() && s < 15) ImGui::SameLine(0, 2.0f);
+                }
             }
 
             ImGui::Separator();
-            ImGui::Text("Task Controller Activity Log:");
-            if (ImGui::BeginChild("TcLogChild", ImVec2(0, 100), true))
+
+            static int activeTabTarget = -1;
+            if (ImGui::BeginTabBar("TcBasTabs", ImGuiTabBarFlags_None))
             {
-                const auto &logs = tcManager->get_recent_logs();
-                for (const auto &line : logs)
+                // ── TAB 1: TC-BAS & ISO-XML (TASKDATA) ─────────────────────────
+                if (ImGui::BeginTabItem("TC-BAS & ISO-XML"))
                 {
-                    ImGui::TextUnformatted(line.c_str());
+                    ImGui::TextColored(ImVec4(0.3f, 0.85f, 1.0f, 1.0f), "ISO 11783-10 Task Controller Basic (TC-BAS) - Rejestracja Pracy Polowej");
+                    ImGui::Separator();
+
+                    // Parametry bieżącego zadania
+                    char tNameBuf[64];
+                    strncpy_s(tNameBuf, curTask.taskName.c_str(), sizeof(tNameBuf));
+                    ImGui::SetNextItemWidth(200.0f);
+                    if (ImGui::InputText("Nazwa zadania##tn", tNameBuf, sizeof(tNameBuf)))
+                        curTask.taskName = tNameBuf;
+
+                    ImGui::SameLine();
+                    char fNameBuf[64];
+                    strncpy_s(fNameBuf, curTask.fieldName.c_str(), sizeof(fNameBuf));
+                    ImGui::SetNextItemWidth(200.0f);
+                    if (ImGui::InputText("Pole / Działka##fn", fNameBuf, sizeof(fNameBuf)))
+                    {
+                        curTask.fieldName = fNameBuf;
+                        curTask.sorData.fieldName = fNameBuf;
+                    }
+
+                    // Szybki wybór działki z bazy profilu
+                    if (!profile.parcels.empty())
+                    {
+                        ImGui::SameLine();
+                        if (ImGui::BeginCombo("##quickParcel", "Wybierz z profilu..."))
+                        {
+                            for (size_t i = 0; i < profile.parcels.size(); ++i)
+                            {
+                                const auto &p = profile.parcels[i];
+                                std::string lbl = p.name + " (" + p.parcelNumber + " - " + std::to_string((int)p.areaHa) + " ha)";
+                                if (ImGui::Selectable(lbl.c_str()))
+                                {
+                                    tcBas.select_parcel_for_task(i);
+                                    isobus_vt::TerminalSettings::get_instance().play_touch_beep();
+                                }
+                            }
+                            ImGui::EndCombo();
+                        }
+                    }
+
+                    float curWidth = curTask.implementWidthMeters;
+                    ImGui::SetNextItemWidth(120.0f);
+                    if (ImGui::InputFloat("Szerokość robocza [m]##iw", &curWidth, 0.5f, 1.0f, "%.1f m"))
+                    {
+                        if (curWidth > 0.5f) curTask.implementWidthMeters = curWidth;
+                    }
+
+                    ImGui::Spacing();
+
+                    // Przyciski sterowania zadaniem
+                    if (!curTask.isRunning)
+                    {
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.65f, 0.25f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.80f, 0.35f, 1.0f));
+                        if (ImGui::Button(" ▶ ROZPOCZNIJ NOWE ZADANIE / ZABIEG ", ImVec2(280.0f, 32.0f)))
+                        {
+                            tcBas.start_task(curTask.taskName, curTask.fieldName, curTask.implementWidthMeters);
+                            isobus_vt::TerminalSettings::get_instance().play_touch_beep();
+                        }
+                        ImGui::PopStyleColor(2);
+                    }
+                    else
+                    {
+                        if (!curTask.isPaused)
+                        {
+                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.60f, 0.15f, 1.0f));
+                            if (ImGui::Button(" ⏸ WSTRZYMAJ (PAUZA) ", ImVec2(160.0f, 32.0f)))
+                            {
+                                tcBas.pause_task();
+                                isobus_vt::TerminalSettings::get_instance().play_touch_beep();
+                            }
+                            ImGui::PopStyleColor();
+                        }
+                        else
+                        {
+                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.70f, 0.30f, 1.0f));
+                            if (ImGui::Button(" ▶ WZNÓW PRACĘ ", ImVec2(160.0f, 32.0f)))
+                            {
+                                tcBas.resume_task();
+                                isobus_vt::TerminalSettings::get_instance().play_touch_beep();
+                            }
+                            ImGui::PopStyleColor();
+                        }
+
+                        ImGui::SameLine();
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.20f, 0.18f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.90f, 0.25f, 0.22f, 1.0f));
+                        if (ImGui::Button(" ⏹ ZAKOŃCZ I ZAPISZ ZADANIE ", ImVec2(200.0f, 32.0f)))
+                        {
+                            tcBas.stop_task();
+                            isobus_vt::TerminalSettings::get_instance().play_touch_beep();
+                        }
+                        ImGui::PopStyleColor(2);
+                    }
+
+                    ImGui::Spacing();
+                    ImGui::Separator();
+
+                    // Duże liczniki pracy (Totals)
+                    ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.9f, 1.0f), "Liczniki Zadania (ISO-XML Totals na żywo):");
+                    ImGui::Columns(4, "TotalsCols", false);
+
+                    ImGui::TextDisabled("POWIERZCHNIA");
+                    ImGui::TextColored(ImVec4(0.25f, 0.95f, 0.45f, 1.0f), "%.3f ha", curTask.workedAreaHa);
+                    ImGui::NextColumn();
+
+                    ImGui::TextDisabled("CZAS PRACY");
+                    std::string timeStr = isobus_vt::TcBasReportManager::format_time_hhmmss(curTask.elapsedWorkSeconds);
+                    ImGui::TextColored(ImVec4(0.35f, 0.85f, 1.0f, 1.0f), "%s", timeStr.c_str());
+                    ImGui::NextColumn();
+
+                    ImGui::TextDisabled("DYSTANS");
+                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "%.2f km", curTask.workedDistanceKm);
+                    ImGui::NextColumn();
+
+                    ImGui::TextDisabled("ŚR. PRĘDKOŚĆ");
+                    ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.85f, 1.0f), "%.1f km/h", curTask.avgSpeedKph);
+                    ImGui::Columns(1);
+
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
+                    // Ramka eksportu ISO-XML (TASKDATA.XML)
+                    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Eksport Danych ISO-XML (ISO 11783-10: TASKDATA.XML):");
+                    ImGui::TextDisabled("Zgodny z systemami FMIS (365FarmNet, John Deere Operations Center, Claas Telematics):");
+
+                    static std::string xmlExportStatus = "";
+                    static float xmlStatusTimer = 0.0f;
+                    if (xmlStatusTimer > 0.0f) xmlStatusTimer -= ImGui::GetIO().DeltaTime;
+
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.35f, 0.55f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.45f, 0.70f, 1.0f));
+                    if (ImGui::Button(" 💾 Eksportuj do ISO-XML (TASKDATA/TASKDATA.XML) ", ImVec2(340.0f, 30.0f)))
+                    {
+                        std::string outPath;
+                        if (tcBas.export_taskdata_xml("TASKDATA", &outPath))
+                        {
+                            xmlExportStatus = "Wygenerowano pomyślnie: " + outPath;
+                            xmlStatusTimer = 6.0f;
+                            isobus_vt::TerminalSettings::get_instance().play_touch_beep();
+                        }
+                    }
+                    ImGui::PopStyleColor(2);
+
+                    ImGui::SameLine();
+                    if (ImGui::Button(" 📁 Otwórz Folder TASKDATA ", ImVec2(200.0f, 30.0f)))
+                    {
+                        ShellExecuteA(NULL, "open", "TASKDATA", NULL, NULL, SW_SHOWNORMAL);
+                    }
+
+                    if (xmlStatusTimer > 0.0f && !xmlExportStatus.empty())
+                    {
+                        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "✓ %s", xmlExportStatus.c_str());
+                    }
+
+                    ImGui::EndTabItem();
                 }
-                if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
-                    ImGui::SetScrollHereY(1.0f);
+
+                // ── TAB 2: EWIDENCJA ŚOR 2027 ──────────────────────────────────
+                if (ImGui::BeginTabItem("Ewidencja ŚOR 2027"))
+                {
+                    auto &sor = curTask.sorData;
+
+                    ImGui::TextColored(ImVec4(0.35f, 0.90f, 0.50f, 1.0f), "Elektroniczny Rejestr Zabiegów Środkami Ochrony Roślin (od 2026/2027 r.)");
+                    ImGui::TextDisabled("Wymóg prawny: Rozporządzenie (WE) nr 1107/2009 (art. 67) & przepisy krajowe PIORiN");
+                    ImGui::Separator();
+
+                    // Górny pasek szybkiego wyboru działki z profilu
+                    if (!profile.parcels.empty())
+                    {
+                        ImGui::Text("Szybki wybór działki z profilu:");
+                        ImGui::SameLine();
+                        for (size_t i = 0; i < profile.parcels.size() && i < 4; ++i)
+                        {
+                            if (i > 0) ImGui::SameLine();
+                            const auto &p = profile.parcels[i];
+                            std::string bLabel = p.name + " (" + p.parcelNumber + ")";
+                            if (ImGui::SmallButton(bLabel.c_str()))
+                            {
+                                tcBas.select_parcel_for_task(i);
+                                isobus_vt::TerminalSettings::get_instance().play_touch_beep();
+                            }
+                        }
+                    }
+
+                    ImGui::Spacing();
+
+                    // Formularz zabiegu w dwóch kolumnach
+                    ImGui::Columns(2, "SorFormCols", true);
+
+                    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "1. Lokalizacja i Uprawa:");
+
+                    char bFarm[64]; strncpy_s(bFarm, sor.farmName.c_str(), sizeof(bFarm));
+                    ImGui::SetNextItemWidth(-1);
+                    if (ImGui::InputTextWithHint("##farm", "Gospodarstwo / Podmiot", bFarm, sizeof(bFarm))) sor.farmName = bFarm;
+
+                    char bField[64]; strncpy_s(bField, sor.fieldName.c_str(), sizeof(bField));
+                    ImGui::SetNextItemWidth(-1);
+                    if (ImGui::InputTextWithHint("##fld", "Nazwa pola / Działki rolnej", bField, sizeof(bField)))
+                    {
+                        sor.fieldName = bField;
+                        curTask.fieldName = bField;
+                    }
+
+                    char bParcel[32]; strncpy_s(bParcel, sor.cadastralParcel.c_str(), sizeof(bParcel));
+                    ImGui::SetNextItemWidth(-1);
+                    if (ImGui::InputTextWithHint("##parc", "Nr działki ewidencyjnej (np. 142/3)", bParcel, sizeof(bParcel))) sor.cadastralParcel = bParcel;
+
+                    char bPrecinct[32]; strncpy_s(bPrecinct, sor.cadastralPrecinct.c_str(), sizeof(bPrecinct));
+                    ImGui::SetNextItemWidth(-1);
+                    if (ImGui::InputTextWithHint("##prec", "Obręb ewidencyjny", bPrecinct, sizeof(bPrecinct))) sor.cadastralPrecinct = bPrecinct;
+
+                    char bCommune[32]; strncpy_s(bCommune, sor.commune.c_str(), sizeof(bCommune));
+                    ImGui::SetNextItemWidth(-1);
+                    if (ImGui::InputTextWithHint("##comm", "Gmina / Powiat", bCommune, sizeof(bCommune))) sor.commune = bCommune;
+
+                    char bCrop[64]; strncpy_s(bCrop, sor.cropName.c_str(), sizeof(bCrop));
+                    ImGui::SetNextItemWidth(-1);
+                    if (ImGui::InputTextWithHint("##crop", "Roślina uprawna (np. Pszenica ozima)", bCrop, sizeof(bCrop))) sor.cropName = bCrop;
+
+                    char bBbch[64]; strncpy_s(bBbch, sor.bbchStage.c_str(), sizeof(bBbch));
+                    ImGui::SetNextItemWidth(-1);
+                    if (ImGui::InputTextWithHint("##bbch", "Faza rozwojowa (np. BBCH 31)", bBbch, sizeof(bBbch))) sor.bbchStage = bBbch;
+
+                    ImGui::NextColumn();
+
+                    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "2. Preparat (ŚOR) i Warunki:");
+
+                    char bChem[64]; strncpy_s(bChem, sor.chemicalName.c_str(), sizeof(bChem));
+                    ImGui::SetNextItemWidth(-1);
+                    if (ImGui::InputTextWithHint("##chem", "Nazwa handlowa preparatu", bChem, sizeof(bChem))) sor.chemicalName = bChem;
+
+                    char bPermit[32]; strncpy_s(bPermit, sor.permitNumber.c_str(), sizeof(bPermit));
+                    ImGui::SetNextItemWidth(-1);
+                    if (ImGui::InputTextWithHint("##perm", "Nr zezwolenia MRiRW", bPermit, sizeof(bPermit))) sor.permitNumber = bPermit;
+
+                    ImGui::SetNextItemWidth(120.0f);
+                    ImGui::InputFloat("Dawka [l/ha]##dose", &sor.dosePerHa, 0.1f, 0.5f, "%.2f");
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(120.0f);
+                    ImGui::InputFloat("Ciecz [l/ha]##wtr", &sor.waterPerHa, 10.0f, 50.0f, "%.0f");
+
+                    char bPest[96]; strncpy_s(bPest, sor.targetPest.c_str(), sizeof(bPest));
+                    ImGui::SetNextItemWidth(-1);
+                    if (ImGui::InputTextWithHint("##pest", "Zwalczany agrofag (przyczyna zabiegu)", bPest, sizeof(bPest))) sor.targetPest = bPest;
+
+                    ImGui::SetNextItemWidth(120.0f);
+                    ImGui::InputFloat("Temp [°C]##tmp", &sor.temperatureC, 0.5f, 1.0f, "%.1f °C");
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(120.0f);
+                    ImGui::InputFloat("Wiatr [m/s]##wnd", &sor.windSpeedMs, 0.1f, 0.5f, "%.1f m/s");
+
+                    char bOper[64]; strncpy_s(bOper, sor.operatorName.c_str(), sizeof(bOper));
+                    ImGui::SetNextItemWidth(-1);
+                    if (ImGui::InputTextWithHint("##oper", "Osoba wykonująca zabieg", bOper, sizeof(bOper))) sor.operatorName = bOper;
+
+                    char bCert[48]; strncpy_s(bCert, sor.operatorCertificateNo.c_str(), sizeof(bCert));
+                    ImGui::SetNextItemWidth(-1);
+                    if (ImGui::InputTextWithHint("##cert", "Nr zaświadczenia szkolenia ŚOR", bCert, sizeof(bCert))) sor.operatorCertificateNo = bCert;
+
+                    char bInsp[48]; strncpy_s(bInsp, sor.sprayerInspectionNo.c_str(), sizeof(bInsp));
+                    ImGui::SetNextItemWidth(-1);
+                    if (ImGui::InputTextWithHint("##insp", "Atest opryskiwacza (nr badania)", bInsp, sizeof(bInsp))) sor.sprayerInspectionNo = bInsp;
+
+                    ImGui::Columns(1);
+                    ImGui::Separator();
+
+                    // Podsumowanie bieżącego bilansu zabiegu
+                    float curArea = curTask.workedAreaHa;
+                    float curChem = curArea * sor.dosePerHa;
+                    ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.9f, 1.0f),
+                                       "Bilans Zabiegu (Zliczenie z GPS / Task Controllera): Powierzchnia: ");
+                    ImGui::SameLine();
+                    ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "%.2f ha", curArea);
+                    ImGui::SameLine();
+                    ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.9f, 1.0f), "| Zużycie środka: ");
+                    ImGui::SameLine();
+                    ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "%.2f %s", curChem, sor.doseUnit.c_str());
+
+                    ImGui::Spacing();
+
+                    // Przyciski generowania oficjalnej karty i rejestru
+                    static std::string htmlExportStatus = "";
+                    static float htmlStatusTimer = 0.0f;
+                    if (htmlStatusTimer > 0.0f) htmlStatusTimer -= ImGui::GetIO().DeltaTime;
+
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.55f, 0.28f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.70f, 0.35f, 1.0f));
+                    if (ImGui::Button(" 🖨️ Generuj Kartę Zabiegu ŚOR (Druk A4 / HTML do kontroli PIORiN) ", ImVec2(410.0f, 32.0f)))
+                    {
+                        sor.appliedAreaHa = curArea;
+                        sor.totalChemicalUsed = curChem;
+                        std::string outPath;
+                        if (tcBas.export_sor_html_report(sor, "Raporty_SOR", &outPath))
+                        {
+                            htmlExportStatus = "Wygenerowano kartę: " + outPath;
+                            htmlStatusTimer = 6.0f;
+                            isobus_vt::TerminalSettings::get_instance().play_touch_beep();
+                            ShellExecuteA(NULL, "open", outPath.c_str(), NULL, NULL, SW_SHOWNORMAL);
+                        }
+                    }
+                    ImGui::PopStyleColor(2);
+
+                    ImGui::SameLine();
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.38f, 0.60f, 1.0f));
+                    if (ImGui::Button(" 📊 Eksportuj Rejestr do Excela (CSV) ", ImVec2(240.0f, 32.0f)))
+                    {
+                        std::string outCsv;
+                        if (tcBas.export_sor_csv_register("Raporty_SOR", &outCsv))
+                        {
+                            htmlExportStatus = "Wyeksportowano rejestr CSV: " + outCsv;
+                            htmlStatusTimer = 6.0f;
+                            isobus_vt::TerminalSettings::get_instance().play_touch_beep();
+                            ShellExecuteA(NULL, "open", outCsv.c_str(), NULL, NULL, SW_SHOWNORMAL);
+                        }
+                    }
+                    ImGui::PopStyleColor();
+
+                    ImGui::SameLine();
+                    if (ImGui::Button(" 📁 Folder Raportów ", ImVec2(140.0f, 32.0f)))
+                    {
+                        ShellExecuteA(NULL, "open", "Raporty_SOR", NULL, NULL, SW_SHOWNORMAL);
+                    }
+
+                    if (htmlStatusTimer > 0.0f && !htmlExportStatus.empty())
+                    {
+                        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "✓ %s", htmlExportStatus.c_str());
+                    }
+
+                    ImGui::EndTabItem();
+                }
+
+                // ── TAB 3: KATALOG ŚRODKÓW MRiRW (2953 PREPARATY) ──────────────
+                if (ImGui::BeginTabItem("Katalog Środków MRiRW"))
+                {
+                    ImGui::TextColored(ImVec4(0.35f, 0.85f, 1.0f, 1.0f), "Oficjalna Baza Środków Ochrony Roślin MRiRW (2953 preparaty)");
+                    ImGui::TextDisabled("Wyszukaj środek i kliknij 'Wybierz do zabiegu', aby automatycznie przenieść dane do ewidencji.");
+                    ImGui::Separator();
+
+                    static char searchBuf[96] = "";
+                    static int selectedKindIdx = 0;
+                    const char* kindOptions[] = {
+                        "Wszystkie rodzaje",
+                        "Chwastobójcze (Herbicydy)",
+                        "Grzybobójcze (Fungicydy)",
+                        "Owadowbójcze (Insektycydy)",
+                        "Regulatory wzrostu",
+                        "Moluskocydy (ślimakobójcze)",
+                        "Akarycydy (przędziorkobójcze)"
+                    };
+                    const char* kindFilterTags[] = {
+                        "",
+                        "Chwast",
+                        "Fungicyd",
+                        "Insektycyd",
+                        "Regulator",
+                        "Moluskocyd",
+                        "Akarycyd"
+                    };
+
+                    ImGui::SetNextItemWidth(240.0f);
+                    ImGui::InputTextWithHint("##sorSearch", "Szukaj: nazwa, substancja, zezwolenie...", searchBuf, sizeof(searchBuf));
+
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(220.0f);
+                    ImGui::Combo("Filtr rodzaju", &selectedKindIdx, kindOptions, 7);
+
+                    std::string q = searchBuf;
+                    std::string kFilter = kindFilterTags[selectedKindIdx];
+                    auto results = catalog.search(q, kFilter, 60);
+
+                    ImGui::TextDisabled("Znaleziono: %zu wyników (wyświetlono maks. 60)", results.size());
+                    ImGui::Spacing();
+
+                    if (ImGui::BeginTable("CatalogTable", 6, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, 320)))
+                    {
+                        ImGui::TableSetupColumn("Nazwa handlowa", ImGuiTableColumnFlags_WidthFixed, 180.0f);
+                        ImGui::TableSetupColumn("Nr zezwolenia", ImGuiTableColumnFlags_WidthFixed, 110.0f);
+                        ImGui::TableSetupColumn("Rodzaj", ImGuiTableColumnFlags_WidthFixed, 120.0f);
+                        ImGui::TableSetupColumn("Substancja czynna");
+                        ImGui::TableSetupColumn("Producent", ImGuiTableColumnFlags_WidthFixed, 160.0f);
+                        ImGui::TableSetupColumn("Akcja", ImGuiTableColumnFlags_WidthFixed, 130.0f);
+                        ImGui::TableHeadersRow();
+
+                        for (size_t i = 0; i < results.size(); ++i)
+                        {
+                            const auto *p = results[i];
+                            ImGui::TableNextRow();
+
+                            ImGui::TableNextColumn();
+                            ImGui::TextColored(ImVec4(0.25f, 0.90f, 0.45f, 1.0f), "%s", p->name.c_str());
+
+                            ImGui::TableNextColumn();
+                            ImGui::Text("%s", p->permit.c_str());
+
+                            ImGui::TableNextColumn();
+                            ImGui::Text("%s", p->kind.c_str());
+
+                            ImGui::TableNextColumn();
+                            ImGui::TextWrapped("%s", p->substance.c_str());
+
+                            ImGui::TableNextColumn();
+                            ImGui::Text("%s", p->producer.c_str());
+
+                            ImGui::TableNextColumn();
+                            ImGui::PushID(static_cast<int>(i));
+                            if (ImGui::Button("Wybierz do zabiegu"))
+                            {
+                                tcBas.select_chemical_from_catalog(*p);
+                                isobus_vt::TerminalSettings::get_instance().play_touch_beep();
+                            }
+                            ImGui::PopID();
+                        }
+                        ImGui::EndTable();
+                    }
+
+                    ImGui::EndTabItem();
+                }
+
+                // ── TAB 4: PROFIL GOSPODARSTWA I ATESTY ────────────────────────
+                if (ImGui::BeginTabItem("Profil Gospodarstwa i Atesty"))
+                {
+                    ImGui::TextColored(ImVec4(0.4f, 0.85f, 1.0f, 1.0f), "Trwały Profil Gospodarstwa, Sprzętu (Atesty) i Uprawnień ŚOR");
+                    ImGui::TextDisabled("Dane zapisywane w pliku profil_gospodarstwa.json - uzupełniają się automatycznie przy każdym zabiegu.");
+                    ImGui::Separator();
+
+                    ImGui::Columns(2, "ProfileCols", true);
+
+                    // Kolumna 1: Gospodarstwo i Operator
+                    ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.5f, 1.0f), "1. DANE GOSPODARSTWA:");
+                    char bFName[96]; strncpy_s(bFName, profile.farmName.c_str(), sizeof(bFName));
+                    if (ImGui::InputText("Gospodarstwo / Podmiot##pfFarm", bFName, sizeof(bFName))) profile.farmName = bFName;
+
+                    char bFAddr[128]; strncpy_s(bFAddr, profile.farmAddress.c_str(), sizeof(bFAddr));
+                    if (ImGui::InputText("Siedziba / Adres##pfAddr", bFAddr, sizeof(bFAddr))) profile.farmAddress = bFAddr;
+
+                    char bFArimr[32]; strncpy_s(bFArimr, profile.producerNumberArimr.c_str(), sizeof(bFArimr));
+                    if (ImGui::InputText("Nr producenta ARiMR##pfArimr", bFArimr, sizeof(bFArimr))) profile.producerNumberArimr = bFArimr;
+
+                    char bFComm[64]; strncpy_s(bFComm, profile.commune.c_str(), sizeof(bFComm));
+                    if (ImGui::InputText("Gmina / Powiat##pfComm", bFComm, sizeof(bFComm))) profile.commune = bFComm;
+
+                    char bFPrec[48]; strncpy_s(bFPrec, profile.defaultPrecinct.c_str(), sizeof(bFPrec));
+                    if (ImGui::InputText("Domyślny obręb##pfPrec", bFPrec, sizeof(bFPrec))) profile.defaultPrecinct = bFPrec;
+
+                    ImGui::Spacing();
+                    ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.5f, 1.0f), "2. OPERATOR I SZKOLENIE ŚOR:");
+                    char bOpName[64]; strncpy_s(bOpName, profile.operatorName.c_str(), sizeof(bOpName));
+                    if (ImGui::InputText("Imię i nazwisko##pfOp", bOpName, sizeof(bOpName))) profile.operatorName = bOpName;
+
+                    char bOpCert[48]; strncpy_s(bOpCert, profile.operatorCertificateNo.c_str(), sizeof(bOpCert));
+                    if (ImGui::InputText("Nr zaświadczenia ŚOR##pfCert", bOpCert, sizeof(bOpCert))) profile.operatorCertificateNo = bOpCert;
+
+                    char bOpValid[32]; strncpy_s(bOpValid, profile.operatorCertificateValidUntil.c_str(), sizeof(bOpValid));
+                    if (ImGui::InputText("Ważność zaświadczenia##pfOpVal", bOpValid, sizeof(bOpValid))) profile.operatorCertificateValidUntil = bOpValid;
+
+                    ImGui::NextColumn();
+
+                    // Kolumna 2: Opryskiwacz i Atest
+                    ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.5f, 1.0f), "3. OPRYSKIWACZ I ATEST TECHNICZNY:");
+                    char bSpModel[80]; strncpy_s(bSpModel, profile.sprayerModel.c_str(), sizeof(bSpModel));
+                    if (ImGui::InputText("Model opryskiwacza##pfSpMod", bSpModel, sizeof(bSpModel))) profile.sprayerModel = bSpModel;
+
+                    char bSpSerial[48]; strncpy_s(bSpSerial, profile.sprayerSerialNo.c_str(), sizeof(bSpSerial));
+                    if (ImGui::InputText("Nr fabryczny / VIN##pfSpSer", bSpSerial, sizeof(bSpSerial))) profile.sprayerSerialNo = bSpSerial;
+
+                    char bSpInsp[48]; strncpy_s(bSpInsp, profile.sprayerInspectionNo.c_str(), sizeof(bSpInsp));
+                    if (ImGui::InputText("Nr badania (Atest)##pfSpInsp", bSpInsp, sizeof(bSpInsp))) profile.sprayerInspectionNo = bSpInsp;
+
+                    char bSpInspDate[32]; strncpy_s(bSpInspDate, profile.sprayerInspectionDate.c_str(), sizeof(bSpInspDate));
+                    if (ImGui::InputText("Data badania##pfSpInspD", bSpInspDate, sizeof(bSpInspDate))) profile.sprayerInspectionDate = bSpInspDate;
+
+                    char bSpInspVal[32]; strncpy_s(bSpInspVal, profile.sprayerInspectionValidUntil.c_str(), sizeof(bSpInspVal));
+                    if (ImGui::InputText("Ważność atestu##pfSpInspVal", bSpInspVal, sizeof(bSpInspVal))) profile.sprayerInspectionValidUntil = bSpInspVal;
+
+                    if (ImGui::InputFloat("Szerokość belki [m]##pfSpWidth", &profile.sprayerBoomWidthM, 0.5f, 1.0f, "%.1f m"))
+                    {
+                        if (profile.sprayerBoomWidthM > 0.5f) curTask.implementWidthMeters = profile.sprayerBoomWidthM;
+                    }
+
+                    ImGui::InputFloat("Pojemność zbiornika [l]##pfSpTank", &profile.sprayerTankVolumeL, 50.0f, 200.0f, "%.0f l");
+
+                    char bSpNozzle[64]; strncpy_s(bSpNozzle, profile.nozzleType.c_str(), sizeof(bSpNozzle));
+                    if (ImGui::InputText("Typ rozpylaczy##pfSpNoz", bSpNozzle, sizeof(bSpNozzle))) profile.nozzleType = bSpNozzle;
+
+                    ImGui::Columns(1);
+                    ImGui::Separator();
+
+                    // Tabela zapisanych działek gospodarstwa
+                    ImGui::TextColored(ImVec4(0.4f, 0.85f, 1.0f, 1.0f), "4. BAZA DZIAŁEK ROLNYCH GOSPODARSTWA (%zu działek):", profile.parcels.size());
+
+                    static char newPName[48] = "";
+                    static char newPNumber[32] = "";
+                    static char newPPrecinct[32] = "";
+                    static float newPArea = 10.0f;
+                    static char newPCrop[48] = "";
+
+                    ImGui::SetNextItemWidth(120.0f);
+                    ImGui::InputTextWithHint("##npName", "Nazwa pola", newPName, sizeof(newPName));
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(100.0f);
+                    ImGui::InputTextWithHint("##npNum", "Nr działki", newPNumber, sizeof(newPNumber));
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(100.0f);
+                    ImGui::InputTextWithHint("##npPrec", "Obręb", newPPrecinct, sizeof(newPPrecinct));
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(80.0f);
+                    ImGui::InputFloat("##npArea", &newPArea, 0.5f, 1.0f, "%.1f ha");
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(120.0f);
+                    ImGui::InputTextWithHint("##npCrop", "Uprawa", newPCrop, sizeof(newPCrop));
+                    ImGui::SameLine();
+                    if (ImGui::Button(" ➕ Dodaj Działkę "))
+                    {
+                        if (strlen(newPName) > 0 || strlen(newPNumber) > 0)
+                        {
+                            isobus_vt::FarmParcel p;
+                            p.name = strlen(newPName) > 0 ? newPName : "Pole " + std::string(newPNumber);
+                            p.parcelNumber = newPNumber;
+                            p.precinct = strlen(newPPrecinct) > 0 ? newPPrecinct : profile.defaultPrecinct;
+                            p.commune = profile.commune;
+                            p.areaHa = newPArea;
+                            p.defaultCrop = newPCrop;
+                            profile.parcels.push_back(p);
+                            profile.save_to_file();
+                            newPName[0] = '\0';
+                            newPNumber[0] = '\0';
+                            isobus_vt::TerminalSettings::get_instance().play_touch_beep();
+                        }
+                    }
+
+                    if (ImGui::BeginTable("ParcelsTable", 6, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, 160)))
+                    {
+                        ImGui::TableSetupColumn("Nazwa pola");
+                        ImGui::TableSetupColumn("Nr działki ewidencyjnej", ImGuiTableColumnFlags_WidthFixed, 140.0f);
+                        ImGui::TableSetupColumn("Obręb", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+                        ImGui::TableSetupColumn("Powierzchnia [ha]", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+                        ImGui::TableSetupColumn("Domyślna uprawa");
+                        ImGui::TableSetupColumn("Akcje", ImGuiTableColumnFlags_WidthFixed, 140.0f);
+                        ImGui::TableHeadersRow();
+
+                        for (size_t i = 0; i < profile.parcels.size(); ++i)
+                        {
+                            const auto &p = profile.parcels[i];
+                            ImGui::TableNextRow();
+                            ImGui::TableNextColumn();
+                            ImGui::Text("%s", p.name.c_str());
+
+                            ImGui::TableNextColumn();
+                            ImGui::Text("%s", p.parcelNumber.c_str());
+
+                            ImGui::TableNextColumn();
+                            ImGui::Text("%s", p.precinct.c_str());
+
+                            ImGui::TableNextColumn();
+                            ImGui::Text("%.2f ha", p.areaHa);
+
+                            ImGui::TableNextColumn();
+                            ImGui::Text("%s", p.defaultCrop.c_str());
+
+                            ImGui::TableNextColumn();
+                            ImGui::PushID(static_cast<int>(i));
+                            if (ImGui::SmallButton("Wczytaj"))
+                            {
+                                tcBas.select_parcel_for_task(i);
+                                isobus_vt::TerminalSettings::get_instance().play_touch_beep();
+                            }
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton("Usuń"))
+                            {
+                                profile.parcels.erase(profile.parcels.begin() + i);
+                                profile.save_to_file();
+                                ImGui::PopID();
+                                break;
+                            }
+                            ImGui::PopID();
+                        }
+                        ImGui::EndTable();
+                    }
+
+                    ImGui::Spacing();
+                    static bool profileSavedNotice = false;
+                    static float profileNoticeTimer = 0.0f;
+                    if (profileNoticeTimer > 0.0f) profileNoticeTimer -= ImGui::GetIO().DeltaTime;
+
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.55f, 0.28f, 1.0f));
+                    if (ImGui::Button(" 💾 ZAPISZ PROFIL GOSPODARSTWA I ATESTY TRWALE ", ImVec2(360.0f, 32.0f)))
+                    {
+                        profile.save_to_file();
+                        tcBas.apply_farm_profile_to_current();
+                        profileSavedNotice = true;
+                        profileNoticeTimer = 4.0f;
+                        isobus_vt::TerminalSettings::get_instance().play_touch_beep();
+                    }
+                    ImGui::PopStyleColor();
+
+                    if (profileNoticeTimer > 0.0f && profileSavedNotice)
+                    {
+                        ImGui::SameLine();
+                        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "✓ Zapisano profil do profil_gospodarstwa.json!");
+                    }
+
+                    ImGui::EndTabItem();
+                }
+
+                // ── TAB 5: SEKCJE I TC-SC (DOTYCHCZASOWY WIDOK) ────────────────
+                if (ImGui::BeginTabItem("Sekcje i GPS (TC-SC)"))
+                {
+                    ImGui::Columns(3, "AogInfoCols", false);
+                    ImGui::Text("Tryb TC: %s", tcManager->is_auto_mode() ? "AUTOMATYCZNY" : "MANUALNY");
+                    ImGui::NextColumn();
+                    ImGui::Text("Prędkość GPS: %.1f km/h", tcManager->get_speed_kph());
+                    ImGui::NextColumn();
+                    ImGui::Text("Jakość Fixa: %u", tcManager->get_udp_bridge() ? tcManager->get_udp_bridge()->get_gps_fix_quality() : 0);
+                    ImGui::Columns(1);
+
+                    ImGui::Separator();
+                    std::uint8_t nSections = tcManager->get_num_sections();
+                    if (nSections > 0)
+                    {
+                        auto setpoints = tcManager->get_section_setpoints();
+                        auto actualStates = tcManager->get_section_states();
+
+                        ImGui::Text("Sekcje Implementu (%u wykrytych na magistrali ISOBUS):", nSections);
+                        for (std::uint8_t i = 0; i < nSections; ++i)
+                        {
+                            if (i > 0 && (i % 8 != 0)) ImGui::SameLine();
+                            bool actOn = (i < actualStates.size()) && actualStates[i];
+                            bool spOn  = (i < setpoints.size()) && setpoints[i];
+                            bool on    = actOn || spOn;
+
+                            ImVec4 col = on ? ImVec4(0.2f, 0.85f, 0.3f, 1.0f) : ImVec4(0.45f, 0.45f, 0.50f, 1.0f);
+                            ImGui::TextColored(col, "[Sekcja %u: %s]", i + 1, on ? "ON" : "OFF");
+                        }
+                    }
+                    else
+                    {
+                        ImGui::TextDisabled("Brak zarejestrowanych sekcji implementu (DDOP). Podłącz maszynę do magistrali CAN.");
+                    }
+
+                    ImGui::Separator();
+                    ImGui::Text("Dziennik Aktywności Task Controllera:");
+                    if (ImGui::BeginChild("TcLogChild", ImVec2(0, 110), true))
+                    {
+                        const auto &logs = tcManager->get_recent_logs();
+                        for (const auto &line : logs)
+                        {
+                            ImGui::TextUnformatted(line.c_str());
+                        }
+                        if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
+                            ImGui::SetScrollHereY(1.0f);
+                    }
+                    ImGui::EndChild();
+                    ImGui::EndTabItem();
+                }
+
+                // ── TAB 6: HISTORIA ZABIEGÓW ───────────────────────────────────
+                if (ImGui::BeginTabItem("Historia Zadań"))
+                {
+                    const auto &hist = tcBas.get_task_history();
+                    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Archiwum Zakończonych Zadań i Zabiegów (%zu wpisów):", hist.size());
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Wyczyść Historię"))
+                    {
+                        tcBas.clear_history();
+                    }
+
+                    ImGui::Separator();
+
+                    if (ImGui::BeginTable("TaskHistoryTable", 7, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, 220)))
+                    {
+                        ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, 50.0f);
+                        ImGui::TableSetupColumn("Data zabiegu", ImGuiTableColumnFlags_WidthFixed, 130.0f);
+                        ImGui::TableSetupColumn("Pole / Działka");
+                        ImGui::TableSetupColumn("Uprawa");
+                        ImGui::TableSetupColumn("Środek ŚOR");
+                        ImGui::TableSetupColumn("Obszar [ha]", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+                        ImGui::TableSetupColumn("Akcja", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+                        ImGui::TableHeadersRow();
+
+                        for (std::size_t i = 0; i < hist.size(); ++i)
+                        {
+                            const auto &entry = hist[i];
+                            ImGui::TableNextRow();
+                            ImGui::TableNextColumn();
+                            ImGui::Text("%s", entry.taskId.c_str());
+
+                            ImGui::TableNextColumn();
+                            ImGui::Text("%s", entry.sorData.startTimeIso.c_str());
+
+                            ImGui::TableNextColumn();
+                            ImGui::Text("%s (Dz. %s)", entry.fieldName.c_str(), entry.sorData.cadastralParcel.c_str());
+
+                            ImGui::TableNextColumn();
+                            ImGui::Text("%s", entry.sorData.cropName.c_str());
+
+                            ImGui::TableNextColumn();
+                            ImGui::Text("%s", entry.sorData.chemicalName.c_str());
+
+                            ImGui::TableNextColumn();
+                            ImGui::TextColored(ImVec4(0.2f, 0.9f, 0.4f, 1.0f), "%.2f ha", entry.workedAreaHa);
+
+                            ImGui::TableNextColumn();
+                            ImGui::PushID(static_cast<int>(i));
+                            if (ImGui::SmallButton("Karta ŚOR"))
+                            {
+                                std::string outPath;
+                                if (tcBas.export_sor_html_report(entry.sorData, "Raporty_SOR", &outPath))
+                                {
+                                    ShellExecuteA(NULL, "open", outPath.c_str(), NULL, NULL, SW_SHOWNORMAL);
+                                }
+                            }
+                            ImGui::PopID();
+                        }
+                        ImGui::EndTable();
+                    }
+                    ImGui::EndTabItem();
+                }
+
+                ImGui::EndTabBar();
             }
-            ImGui::EndChild();
+
             ImGui::End();
         }
 
@@ -1393,6 +2238,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
             }
 
             ImGui::End();
+        }
+
+        // Tractor Telemetry & J1939 Dashboard
+        if (showTractorWindow && !g_isHudMode)
+        {
+            isobus_vt::TractorEcuManager::get_instance().render_tractor_dashboard(&showTractorWindow);
+        }
+
+        if (showTractorPgnConfig && !g_isHudMode)
+        {
+            isobus_vt::TractorEcuManager::get_instance().render_pgn_config_dialog(&showTractorPgnConfig);
         }
 
             if (g_TriggerResetLayout)

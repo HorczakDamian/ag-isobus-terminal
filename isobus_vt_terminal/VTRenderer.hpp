@@ -19,7 +19,14 @@ namespace isobus_vt
 
         void render_terminal_window();
         void render_mini_views_window(bool *p_open = nullptr);
-        void reset_layout() { resetLayoutRequested = true; }
+        void reset_layout(float posX = -1.0f, float posY = -1.0f, float width = -1.0f, float height = -1.0f)
+        {
+            resetLayoutRequested = true;
+            customPosX = posX;
+            customPosY = posY;
+            customWidth = width;
+            customHeight = height;
+        }
         void open_settings_dialog() { showMainSettingsDialog = true; }
         void set_managers(std::shared_ptr<CanManager> canMgr, std::shared_ptr<TaskControllerManager> tcMgr)
         {
@@ -32,6 +39,10 @@ namespace isobus_vt
         std::shared_ptr<CanManager> canManager = nullptr;
         std::shared_ptr<TaskControllerManager> tcManager = nullptr;
         bool resetLayoutRequested = false;
+        float customPosX = -1.0f;
+        float customPosY = -1.0f;
+        float customWidth = -1.0f;
+        float customHeight = -1.0f;
 
         // Modal input dialogs state
         bool showNumberKeypad = false;
@@ -77,7 +88,8 @@ namespace isobus_vt
 
         void render_data_mask(ImDrawList *drawList, ImVec2 maskPos, ImVec2 maskSize,
                              std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet> ws,
-                             std::uint16_t maskId);
+                             std::uint16_t maskId,
+                             bool interactive = true);
 
         void render_object(ImDrawList *drawList, ImVec2 parentPos,
                            std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet> ws,

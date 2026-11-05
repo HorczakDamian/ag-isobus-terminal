@@ -1,4 +1,6 @@
 #include "CustomVTServer.hpp"
+#include "TerminalSettings.hpp"
+#include "isobus/isobus/can_network_manager.hpp"
 #include "isobus/isobus/can_stack_logger.hpp"
 
 #include <algorithm>
@@ -19,20 +21,26 @@ namespace isobus_vt
 
         get_on_change_active_mask_event_dispatcher().add_listener([this](std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet> ws, std::uint16_t, std::uint16_t newMaskId) {
             std::lock_guard<std::recursive_mutex> lock(serverMutex);
-            activeWorkingSetDataMaskObjectID = newMaskId;
             if (ws)
             {
+                lastActiveDataMask[ws] = newMaskId;
+                if (ws == activeWorkingSet)
+                {
+                    activeWorkingSetDataMaskObjectID = newMaskId;
+                }
                 auto maskObj = ws->get_object_by_id(newMaskId);
                 if (maskObj)
                 {
                     if (maskObj->get_object_type() == isobus::VirtualTerminalObjectType::DataMask)
                     {
-                        lastActiveDataMask[ws] = newMaskId;
-                        auto dm = std::dynamic_pointer_cast<isobus::DataMask>(maskObj);
-                        if (dm && dm->get_soft_key_mask() != isobus::NULL_OBJECT_ID)
-                            activeWorkingSetSoftkeyMaskObjectID = dm->get_soft_key_mask();
-                        else
-                            activeWorkingSetSoftkeyMaskObjectID = isobus::NULL_OBJECT_ID;
+                        if (ws == activeWorkingSet)
+                        {
+                            auto dm = std::dynamic_pointer_cast<isobus::DataMask>(maskObj);
+                            if (dm && dm->get_soft_key_mask() != isobus::NULL_OBJECT_ID)
+                                activeWorkingSetSoftkeyMaskObjectID = dm->get_soft_key_mask();
+                            else
+                                activeWorkingSetSoftkeyMaskObjectID = isobus::NULL_OBJECT_ID;
+                        }
                         process_macro(maskObj, isobus::EventID::OnShow, isobus::VirtualTerminalObjectType::DataMask, ws);
                         process_macro(maskObj, isobus::EventID::OnChangeActiveMask, isobus::VirtualTerminalObjectType::DataMask, ws);
                     }
@@ -64,7 +72,38 @@ namespace isobus_vt
         });
 
         init_disk_cache();
+        const auto &cfg = TerminalSettings::get_instance().get_config();
+        apply_language_command_settings(cfg.langCode, cfg.countryCode, cfg.unitDecimal, cfg.unitDate, cfg.unitArea);
     }
+
+    CustomVTServer::~CustomVTServer()
+    {
+        remove_synchronized_callbacks();
+    }
+
+    void CustomVTServer::install_synchronized_callbacks()
+    {
+        isobus::CANNetworkManager::CANNetwork.remove_global_parameter_group_number_callback(0x00E700, process_rx_message, this);
+        isobus::CANNetworkManager::CANNetwork.remove_global_parameter_group_number_callback(0x00FE0D, process_rx_message, this);
+
+        isobus::CANNetworkManager::CANNetwork.add_global_parameter_group_number_callback(0x00E700, synchronized_process_rx_message, this);
+        isobus::CANNetworkManager::CANNetwork.add_global_parameter_group_number_callback(0x00FE0D, synchronized_process_rx_message, this);
+    }
+
+    void CustomVTServer::remove_synchronized_callbacks()
+    {
+        isobus::CANNetworkManager::CANNetwork.remove_global_parameter_group_number_callback(0x00E700, synchronized_process_rx_message, this);
+        isobus::CANNetworkManager::CANNetwork.remove_global_parameter_group_number_callback(0x00FE0D, synchronized_process_rx_message, this);
+    }
+
+    void CustomVTServer::synchronized_process_rx_message(const isobus::CANMessage &message, void *parent)
+    {
+        auto server = static_cast<CustomVTServer*>(parent);
+        if (!server) return;
+        std::lock_guard<std::recursive_mutex> lock(server->serverMutex);
+        process_rx_message(message, parent);
+    }
+
 
     bool CustomVTServer::get_is_enough_memory(std::uint32_t) const
     {
@@ -93,12 +132,12 @@ namespace isobus_vt
 
     std::uint8_t CustomVTServer::get_number_of_possible_virtual_soft_keys_in_soft_key_mask() const
     {
-        return skRows;
+        return static_cast<std::uint8_t>(std::min(255, static_cast<int>(skRows) * static_cast<int>(skColumns)));
     }
 
     std::uint8_t CustomVTServer::get_number_of_physical_soft_keys() const
     {
-        return skRows;
+        return static_cast<std::uint8_t>(std::min(255, static_cast<int>(skRows) * static_cast<int>(skColumns)));
     }
 
     std::uint16_t CustomVTServer::get_data_mask_area_size_x_pixels() const
@@ -326,6 +365,7 @@ namespace isobus_vt
         while (!label.empty() && (label.back() == ' ' || label.back() == '\0'))
             label.pop_back();
 
+        // 1. Direct memory lookup
         auto key = std::make_pair(clientNAME.get_full_name(), label);
         auto it = poolStorage.find(key);
         if (it != poolStorage.end())
@@ -335,7 +375,18 @@ namespace isobus_vt
             return it->second;
         }
 
-        // Try reading from disk
+        // 2. Fuzzy memory lookup for this client
+        for (const auto &pair : poolStorage)
+        {
+            if (pair.first.first == clientNAME.get_full_name())
+            {
+                LOG_INFO("[VT Server]: Fast-Boot fuzzy matched cached pool for 0x%llX (stored '%s' vs requested '%s', %zu bytes)",
+                         clientNAME.get_full_name(), pair.first.second.c_str(), label.c_str(), pair.second.size());
+                return pair.second;
+            }
+        }
+
+        // 3. Try reading exact path from disk
         std::string path = get_cache_file_path(clientNAME.get_full_name(), label);
         std::ifstream file(path, std::ios::binary | std::ios::ate);
         if (file.is_open())
@@ -348,6 +399,38 @@ namespace isobus_vt
                 poolStorage[key] = buffer;
                 LOG_INFO("[VT Server]: Read cached pool from disk file '%s' (%zu bytes)", path.c_str(), buffer.size());
                 return buffer;
+            }
+        }
+
+        // 4. Scan disk cache folder for any file belonging to this client NAME
+        std::ostringstream ssHex;
+        ssHex << std::hex << std::uppercase << std::setw(16) << std::setfill('0') << clientNAME.get_full_name();
+        std::string hexClient = ssHex.str();
+        std::error_code ec;
+        if (std::filesystem::exists("object_pool_cache", ec))
+        {
+            for (const auto &entry : std::filesystem::directory_iterator("object_pool_cache", ec))
+            {
+                if (entry.is_regular_file(ec) && entry.path().extension() == ".iop")
+                {
+                    if (entry.path().filename().string().find(hexClient) != std::string::npos)
+                    {
+                        std::ifstream diskFile(entry.path(), std::ios::binary | std::ios::ate);
+                        if (diskFile.is_open())
+                        {
+                            std::streamsize size = diskFile.tellg();
+                            diskFile.seekg(0, std::ios::beg);
+                            std::vector<std::uint8_t> buffer(size);
+                            if (diskFile.read(reinterpret_cast<char*>(buffer.data()), size))
+                            {
+                                poolStorage[key] = buffer;
+                                LOG_INFO("[VT Server]: Found and loaded cached pool from disk '%s' (%zu bytes)",
+                                         entry.path().string().c_str(), buffer.size());
+                                return buffer;
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -421,9 +504,30 @@ namespace isobus_vt
         return true;
     }
 
-    void CustomVTServer::handle_unexpected_working_set_shutdown(std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet>, UnexpectedShutdownReason reason)
+    void CustomVTServer::handle_unexpected_working_set_shutdown(std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet> ws, UnexpectedShutdownReason reason)
     {
+        std::lock_guard<std::recursive_mutex> lock(serverMutex);
         LOG_WARNING("[VT Server]: Unexpected shutdown of working set, reason: %d", static_cast<int>(reason));
+        if (ws)
+        {
+            lastActiveDataMask.erase(ws);
+            if (activeWorkingSet == ws)
+            {
+                activeWorkingSet = nullptr;
+                activeWorkingSetMasterAddress = isobus::NULL_CAN_ADDRESS;
+                activeWorkingSetDataMaskObjectID = isobus::NULL_OBJECT_ID;
+                activeWorkingSetSoftkeyMaskObjectID = isobus::NULL_OBJECT_ID;
+
+                for (auto &other : managedWorkingSetList)
+                {
+                    if (other && other != ws && other->get_working_set_object())
+                    {
+                        select_working_set(other);
+                        break;
+                    }
+                }
+            }
+        }
         repaintRequested = true;
     }
 
@@ -461,43 +565,109 @@ namespace isobus_vt
         auto wsObj = workingSet->get_working_set_object();
         if (!wsObj)
         {
-            // Object pool not parsed yet — do NOT call base select_working_set which dereferences null pointer!
             LOG_WARNING("[VT Server]: Cannot select working set - object pool not parsed yet.");
             return;
         }
 
-        // Only call base select_working_set when workingSetObject is valid
-        VirtualTerminalServer::select_working_set(workingSet);
-
-        if (wsObj->get_object_type() == isobus::VirtualTerminalObjectType::WorkingSet)
+        bool wasAlreadyActive = (activeWorkingSet == workingSet);
+        activeWorkingSet = workingSet;
+        if (workingSet->get_control_function())
         {
-            auto wsTyped = std::dynamic_pointer_cast<isobus::WorkingSet>(wsObj);
-            if (wsTyped)
+            activeWorkingSetMasterAddress = workingSet->get_control_function()->get_address();
+        }
+        else
+        {
+            activeWorkingSetMasterAddress = isobus::NULL_CAN_ADDRESS;
+        }
+
+        auto wsTyped = std::dynamic_pointer_cast<isobus::WorkingSet>(wsObj);
+
+        // Find the root DataMask for this Working Set
+        std::uint16_t rootMask = isobus::NULL_OBJECT_ID;
+        if (wsTyped && wsTyped->get_active_mask() != isobus::NULL_OBJECT_ID)
+        {
+            rootMask = wsTyped->get_active_mask();
+        }
+        else if (wsTyped && wsTyped->get_number_children() > 0)
+        {
+            for (std::uint16_t c = 0; c < wsTyped->get_number_children(); ++c)
             {
-                activeWorkingSetDataMaskObjectID = wsTyped->get_active_mask();
-                auto maskObj = workingSet->get_object_by_id(activeWorkingSetDataMaskObjectID);
-                if (maskObj)
+                auto childId = wsTyped->get_child_id(c);
+                if (childId != isobus::NULL_OBJECT_ID)
                 {
-                    if (maskObj->get_object_type() == isobus::VirtualTerminalObjectType::DataMask)
+                    auto child = workingSet->get_object_by_id(childId);
+                    if (child && child->get_object_type() == isobus::VirtualTerminalObjectType::DataMask)
                     {
-                        lastActiveDataMask[workingSet] = activeWorkingSetDataMaskObjectID;
-                        auto dm = std::dynamic_pointer_cast<isobus::DataMask>(maskObj);
-                        if (dm && dm->get_soft_key_mask() != isobus::NULL_OBJECT_ID)
-                            activeWorkingSetSoftkeyMaskObjectID = dm->get_soft_key_mask();
-                        else
-                            activeWorkingSetSoftkeyMaskObjectID = isobus::NULL_OBJECT_ID;
-                    }
-                    else if (maskObj->get_object_type() == isobus::VirtualTerminalObjectType::AlarmMask)
-                    {
-                        auto am = std::dynamic_pointer_cast<isobus::AlarmMask>(maskObj);
-                        if (am && am->get_soft_key_mask() != isobus::NULL_OBJECT_ID)
-                            activeWorkingSetSoftkeyMaskObjectID = am->get_soft_key_mask();
-                        else
-                            activeWorkingSetSoftkeyMaskObjectID = isobus::NULL_OBJECT_ID;
+                        rootMask = childId;
+                        break;
                     }
                 }
             }
         }
+
+        if (rootMask == isobus::NULL_OBJECT_ID)
+        {
+            // Fallback: search object tree for any DataMask
+            const auto &tree = workingSet->get_object_tree();
+            for (const auto &[id, obj] : tree)
+            {
+                if (obj && obj->get_object_type() == isobus::VirtualTerminalObjectType::DataMask)
+                {
+                    rootMask = id;
+                    break;
+                }
+            }
+        }
+
+        std::uint16_t targetMask = isobus::NULL_OBJECT_ID;
+        // If the operator clicks the working set that is ALREADY ACTIVE, return to root/home DataMask!
+        // Otherwise, restore the last active mask recorded for this working set (or fallback to rootMask).
+        if (wasAlreadyActive && rootMask != isobus::NULL_OBJECT_ID)
+        {
+            targetMask = rootMask;
+        }
+        else
+        {
+            auto it = lastActiveDataMask.find(workingSet);
+            if (it != lastActiveDataMask.end() && it->second != isobus::NULL_OBJECT_ID)
+                targetMask = it->second;
+            else
+                targetMask = rootMask;
+        }
+
+        if (targetMask != isobus::NULL_OBJECT_ID)
+        {
+            activeWorkingSetDataMaskObjectID = targetMask;
+            lastActiveDataMask[workingSet] = targetMask;
+            if (wsTyped)
+            {
+                wsTyped->set_active_mask(targetMask);
+            }
+
+            auto maskObj = workingSet->get_object_by_id(targetMask);
+            if (maskObj)
+            {
+                if (maskObj->get_object_type() == isobus::VirtualTerminalObjectType::DataMask)
+                {
+                    auto dm = std::dynamic_pointer_cast<isobus::DataMask>(maskObj);
+                    if (dm && dm->get_soft_key_mask() != isobus::NULL_OBJECT_ID)
+                        activeWorkingSetSoftkeyMaskObjectID = dm->get_soft_key_mask();
+                    else
+                        activeWorkingSetSoftkeyMaskObjectID = isobus::NULL_OBJECT_ID;
+                }
+                else if (maskObj->get_object_type() == isobus::VirtualTerminalObjectType::AlarmMask)
+                {
+                    auto am = std::dynamic_pointer_cast<isobus::AlarmMask>(maskObj);
+                    if (am && am->get_soft_key_mask() != isobus::NULL_OBJECT_ID)
+                        activeWorkingSetSoftkeyMaskObjectID = am->get_soft_key_mask();
+                    else
+                        activeWorkingSetSoftkeyMaskObjectID = isobus::NULL_OBJECT_ID;
+                }
+
+                process_macro(maskObj, isobus::EventID::OnShow, maskObj->get_object_type(), workingSet);
+            }
+        }
+
         LOG_INFO("[VT Server]: Selected working set as active. DataMask=%u, SoftKeyMask=%u",
                  activeWorkingSetDataMaskObjectID, activeWorkingSetSoftkeyMaskObjectID);
         repaintRequested = true;
@@ -505,6 +675,7 @@ namespace isobus_vt
 
     void CustomVTServer::run_update()
     {
+        std::lock_guard<std::recursive_mutex> lock(serverMutex);
         update();
     }
 
@@ -762,5 +933,56 @@ namespace isobus_vt
     bool CustomVTServer::consume_repaint_flag()
     {
         return repaintRequested.exchange(false);
+    }
+
+    void CustomVTServer::apply_language_command_settings(const std::string &langCode,
+                                                         const std::string &countryCode,
+                                                         int decimalSymbol,
+                                                         int dateFormat,
+                                                         int unitSystem)
+    {
+        std::lock_guard<std::recursive_mutex> lock(serverMutex);
+        auto &lang = get_language_command_interface();
+
+        lang.set_language_code(langCode.empty() ? "pl" : langCode);
+        lang.set_country_code(countryCode.empty() ? "PL" : countryCode);
+        lang.set_commanded_decimal_symbol(decimalSymbol == 0 ? isobus::LanguageCommandInterface::DecimalSymbols::Comma
+                                                             : isobus::LanguageCommandInterface::DecimalSymbols::Point);
+        lang.set_commanded_time_format(isobus::LanguageCommandInterface::TimeFormats::TwentyFourHour);
+
+        auto df = isobus::LanguageCommandInterface::DateFormats::ddmmyyyy;
+        switch (dateFormat)
+        {
+            case 0: df = isobus::LanguageCommandInterface::DateFormats::ddmmyyyy; break;
+            case 1: df = isobus::LanguageCommandInterface::DateFormats::ddyyyymm; break;
+            case 2: df = isobus::LanguageCommandInterface::DateFormats::mmddyyyy; break;
+            case 3: df = isobus::LanguageCommandInterface::DateFormats::yyyymmdd; break;
+            case 4: df = isobus::LanguageCommandInterface::DateFormats::yyyyddmm; break;
+            default: df = isobus::LanguageCommandInterface::DateFormats::ddmmyyyy; break;
+        }
+        lang.set_commanded_date_format(df);
+
+        bool isImperial = (unitSystem == 1);
+        lang.set_commanded_distance_units(isImperial ? isobus::LanguageCommandInterface::DistanceUnits::ImperialUS
+                                                     : isobus::LanguageCommandInterface::DistanceUnits::Metric);
+        lang.set_commanded_area_units(isImperial ? isobus::LanguageCommandInterface::AreaUnits::ImperialUS
+                                                 : isobus::LanguageCommandInterface::AreaUnits::Metric);
+        lang.set_commanded_volume_units(isImperial ? isobus::LanguageCommandInterface::VolumeUnits::Imperial
+                                                   : isobus::LanguageCommandInterface::VolumeUnits::Metric);
+        lang.set_commanded_mass_units(isImperial ? isobus::LanguageCommandInterface::MassUnits::Imperial
+                                                 : isobus::LanguageCommandInterface::MassUnits::Metric);
+        lang.set_commanded_pressure_units(isImperial ? isobus::LanguageCommandInterface::PressureUnits::ImperialUS
+                                                     : isobus::LanguageCommandInterface::PressureUnits::Metric);
+        lang.set_commanded_temperature_units(isImperial ? isobus::LanguageCommandInterface::TemperatureUnits::ImperialUS
+                                                        : isobus::LanguageCommandInterface::TemperatureUnits::Metric);
+        lang.set_commanded_force_units(isImperial ? isobus::LanguageCommandInterface::ForceUnits::ImperialUS
+                                                  : isobus::LanguageCommandInterface::ForceUnits::Metric);
+        lang.set_commanded_generic_units(isImperial ? isobus::LanguageCommandInterface::UnitSystem::Imperial
+                                                    : isobus::LanguageCommandInterface::UnitSystem::Metric);
+
+        lang.send_language_command();
+        LOG_INFO("[VT Server]: Sent ISO 11783-7 Language Command (Lang='%s', Country='%s', Dec=%d, Units=%s)",
+                 lang.get_language_code().c_str(), lang.get_country_code().c_str(), decimalSymbol,
+                 isImperial ? "Imperial" : "Metric");
     }
 }

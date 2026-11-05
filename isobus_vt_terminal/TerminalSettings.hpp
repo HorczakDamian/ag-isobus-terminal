@@ -18,7 +18,7 @@ namespace isobus_vt
         bool autoReconnect = true;          // Auto-reconnect CAN on bus error/disconnection
 
         // ── VT Universal Terminal Display & Engine ──
-        int vtVersion = 4;                  // ISO 11783-6 VT Version (2, 3, 4, 5, 6)
+        int vtVersion = 6;                  // ISO 11783-6 VT Version (2, 3, 4, 5, 6)
         int dataMaskSize = 480;             // Base square dimension
         int dataMaskWidth = 480;            // Width (px)
         int dataMaskHeight = 480;           // Height (px)
@@ -62,6 +62,10 @@ namespace isobus_vt
         int hudDockSide = 0;                // 0 = Dokuj do Prawej, 1 = Dokuj do Lewej, 2 = Pływające
         float hudOpacity = 0.88f;           // Przezroczystość nakładki HUD (0.60 do 1.00)
         bool hudAlwaysOnTop = true;         // Zawsze na wierzchu (nad AgOpenGPS)
+
+        // ── Layout & View Splitter ──
+        float splitRatio = 0.50f;           // Proporcja szerokości AgOpen (0.20f do 0.80f)
+        int activeRightTab = 0;             // 0 = Terminal VT, 1 = AUX-N, 2 = Sekcje TC, 3 = CAN Monitor, 4 = Diagnostyka, 5 = Mini-Views
 
         // ── Regional Localization & Units (ISO 11783-7) ──
         std::string langCode = "en";

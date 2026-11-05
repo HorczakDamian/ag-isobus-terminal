@@ -8,6 +8,7 @@
 #include "isobus/isobus/isobus_speed_distance_messages.hpp"
 #include "isobus/isobus/isobus_standard_data_description_indices.hpp"
 #include "isobus/isobus/isobus_task_controller_server.hpp"
+#include "isobus/isobus/isobus_time_date_interface.hpp"
 
 #include <array>
 #include <atomic>
@@ -138,6 +139,11 @@ namespace isobus_vt
         std::vector<bool> get_setpoint_section_states() const;
         bool is_auto_mode() const { return autoMode; }
 
+        ~TerminalTCServer() override;
+        void install_safe_callbacks();
+        void remove_safe_callbacks();
+        static void safe_store_rx_message(const isobus::CANMessage &message, void *parentPointer);
+
     private:
         mutable std::recursive_mutex clientMutex;
         std::map<std::shared_ptr<isobus::ControlFunction>, TcClientState> clients;
@@ -163,6 +169,12 @@ namespace isobus_vt
         // Send section heartbeat packet (PGN 0xF0) to AgOpenGPS
         void send_heartbeat(bool autoMode, std::uint8_t numSections, const std::vector<bool> &actualStates);
 
+        // Send remote switch / work switch command (PGN 0xEA) to AgOpenGPS
+        void send_work_switch_command(bool workActive);
+
+        // Send AutoSteer guidance command (PGN 0xFE) to AgIO / Steer Controller
+        void send_autosteer_command(bool engaged, float steerAngleDeg, float speedKph);
+
         // Send hardware text banner (PGN 0xDD) to AgOpenGPS map
         void send_hardware_message(const std::string &text, std::uint8_t durationSec = 5, std::uint8_t colour = 1);
 
@@ -178,12 +190,15 @@ namespace isobus_vt
         std::function<void(const std::vector<bool>&)> onSectionStatesReceived;
         std::function<void(bool)> onSectionControlModeReceived;
         std::function<void(float speedKph, std::int32_t rawMmPerSec)> onSpeedReceived;
+        std::function<void(const std::string&)> onFieldNameReceived;
+        std::function<void(float totalWidthM, std::uint8_t numSections, const std::vector<float>& widths)> onToolGeometryReceived;
 
     private:
         static constexpr std::uint16_t PACKET_START = 0x8081;
         std::uint8_t calculate_crc(const std::uint8_t *data, std::size_t len);
 
-        std::uintptr_t rxSocket = ~0ULL; // SOCKET descriptor
+        std::uintptr_t rxSocket = ~0ULL; // SOCKET descriptor for Port 8888
+        std::uintptr_t rxSocketLoopback = ~0ULL; // SOCKET descriptor for Port 17777 (AgOpenGPS epAgIO direct loopback)
         std::array<std::uint8_t, 3> subnet = { 192, 168, 5 };
         std::uint16_t txPort = 9999;
 
@@ -218,6 +233,10 @@ namespace isobus_vt
         float get_speed_kph() const;
         bool is_auto_mode() const;
 
+        // Force painting toggle (Manual Override: all sections ON & work switch active)
+        void set_force_paint(bool force) { forcePaint = force; }
+        bool is_force_paint() const { return forcePaint; }
+
         void set_section_actual(std::uint8_t sec, bool state);
         std::function<void(std::uint8_t sec, bool state)> onSectionStateChanged;
         std::function<void(float speedKph)> onSpeedChanged;
@@ -235,8 +254,10 @@ namespace isobus_vt
         std::unique_ptr<isobus::ControlFunctionFunctionalities> tcFunctionalities;
         std::unique_ptr<isobus::ControlFunctionFunctionalities> tecuFunctionalities;
         std::unique_ptr<isobus::SpeedMessagesInterface> speedMessagesInterface;
+        std::unique_ptr<isobus::TimeDateInterface> timeDateInterface;
 
         std::uint32_t lastHeartbeatMs = 0;
+        bool forcePaint = false;
         mutable std::mutex logMutex;
         std::deque<std::string> recentLogs;
     };

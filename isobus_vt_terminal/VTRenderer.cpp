@@ -79,6 +79,32 @@ namespace isobus_vt
 
     // ─────────────────────────────────────────────────────────────────────────────
 
+    static isobus::VirtualTerminalBase::VTVersion int_to_vt_version(int v)
+    {
+        switch (v)
+        {
+            case 2: return isobus::VirtualTerminalBase::VTVersion::Version2OrOlder;
+            case 3: return isobus::VirtualTerminalBase::VTVersion::Version3;
+            case 4: return isobus::VirtualTerminalBase::VTVersion::Version4;
+            case 5: return isobus::VirtualTerminalBase::VTVersion::Version5;
+            case 6: return isobus::VirtualTerminalBase::VTVersion::Version6;
+            default: return isobus::VirtualTerminalBase::VTVersion::Version4;
+        }
+    }
+
+    static int vt_version_to_int(isobus::VirtualTerminalBase::VTVersion v)
+    {
+        switch (v)
+        {
+            case isobus::VirtualTerminalBase::VTVersion::Version2OrOlder: return 2;
+            case isobus::VirtualTerminalBase::VTVersion::Version3: return 3;
+            case isobus::VirtualTerminalBase::VTVersion::Version4: return 4;
+            case isobus::VirtualTerminalBase::VTVersion::Version5: return 5;
+            case isobus::VirtualTerminalBase::VTVersion::Version6: return 6;
+            default: return 4;
+        }
+    }
+
     VTRenderer::VTRenderer(std::shared_ptr<CustomVTServer> vtServer) :
         vtServer(vtServer)
     {
@@ -90,7 +116,7 @@ namespace isobus_vt
         auto &ts = TerminalSettings::get_instance();
         auto &cfg = ts.get_config();
 
-        cfg.vtVersion = static_cast<int>(vtServer->get_configured_version());
+        cfg.vtVersion = vt_version_to_int(vtServer->get_configured_version());
         cfg.dataMaskSize = vtServer->get_configured_mask_size();
         cfg.dataMaskWidth = vtServer->get_configured_mask_size();
         cfg.dataMaskHeight = vtServer->get_configured_mask_size();
@@ -116,6 +142,16 @@ namespace isobus_vt
         cfg.unitVolume = unitVolume;
 
         ts.save();
+        if (vtServer)
+        {
+            vtServer->apply_language_command_settings(
+                cfg.langCode,
+                cfg.countryCode,
+                cfg.unitDecimal,
+                cfg.unitDate,
+                cfg.unitArea
+            );
+        }
     }
 
     void VTRenderer::load_settings()
@@ -124,7 +160,7 @@ namespace isobus_vt
         ts.load();
         const auto &cfg = ts.get_config();
 
-        vtServer->set_vt_version(static_cast<isobus::VirtualTerminalBase::VTVersion>(cfg.vtVersion));
+        vtServer->set_vt_version(int_to_vt_version(cfg.vtVersion));
         vtServer->set_data_mask_size(static_cast<std::uint16_t>(cfg.dataMaskSize));
         vtServer->set_sk_desc_width(static_cast<std::uint8_t>(cfg.skDescWidth));
         vtServer->set_sk_desc_height(static_cast<std::uint8_t>(cfg.skDescHeight));
@@ -482,14 +518,14 @@ namespace isobus_vt
         float endVtAngleDeg   = static_cast<float>(meter->get_end_angle())   * 2.0f;
         bool clockwise = meter->get_option(isobus::OutputMeter::Options::DeflectionDirection);
 
-        if (endVtAngleDeg < startVtAngleDeg)
+        if (endVtAngleDeg <= startVtAngleDeg)
         {
             endVtAngleDeg += 360.0f;
         }
 
         auto calcAngle = [startVtAngleDeg, endVtAngleDeg, clockwise](float frac) -> float {
             float theta = frac * (startVtAngleDeg - endVtAngleDeg);
-            return clockwise ? (endVtAngleDeg + theta) : (endVtAngleDeg - theta);
+            return clockwise ? (endVtAngleDeg + theta) : (startVtAngleDeg - theta);
         };
 
         // Convert ISO 11783-6 angle in degrees (CCW from positive X-axis) to screen coordinates
@@ -662,22 +698,41 @@ namespace isobus_vt
 
     void VTRenderer::render_terminal_window()
     {
+        std::lock_guard<std::recursive_mutex> lock(vtServer->get_server_mutex());
+        const auto &cfg = TerminalSettings::get_instance().get_config();
+
         // Layout calculations & window size constraints
         maskScale = std::max(0.5f, std::min(3.0f, maskScale));
         float configMaskPx  = static_cast<float>(vtServer->get_configured_mask_size());
         const float DATA_W  = configMaskPx * maskScale;
-        const float DATA_H  = configMaskPx * maskScale;
         const float WS_W    = 76.0f * maskScale;
-        const float SK_W    = 95.0f * maskScale;
+
+        int numCols = std::max(1, static_cast<int>(vtServer->get_configured_sk_columns()));
+        int numRows = std::max(1, static_cast<int>(vtServer->get_configured_sk_rows()));
+        float skW_cfg = static_cast<float>(vtServer->get_configured_sk_width());
+        float skH_cfg = static_cast<float>(vtServer->get_configured_sk_height());
+
+        // Each softkey column width (at least 40px base, default 60px)
+        float colKeyW = std::max(40.0f, skW_cfg) * maskScale;
+        const float SK_W = numCols * colKeyW + (numCols + 1) * 6.0f;
         const float PADDING = 12.0f;
+
+        // Content height: max between DataMask height and SoftKey required height
+        float skTotalH = (std::max(40.0f, skH_cfg) * numRows + (numRows + 1) * 6.0f) * maskScale;
+        const float DATA_H = std::max(configMaskPx * maskScale, skTotalH);
+
         float neededW = PADDING * 2.0f + WS_W + 4.0f + DATA_W + 4.0f + SK_W + 30.0f;
         float neededH = DATA_H + PADDING * 2.0f + 85.0f;
 
-        ImGui::SetNextWindowSizeConstraints(ImVec2(neededW, neededH), ImVec2(FLT_MAX, FLT_MAX));
+        ImGui::SetNextWindowSizeConstraints(ImVec2(std::min(neededW, 360.0f), std::min(neededH, 280.0f)), ImVec2(FLT_MAX, FLT_MAX));
         if (resetLayoutRequested)
         {
-            ImGui::SetNextWindowPos(ImVec2(10.0f, 30.0f), ImGuiCond_Always);
-            ImGui::SetNextWindowSize(ImVec2(neededW, neededH), ImGuiCond_Always);
+            float targetX = (customPosX >= 0.0f) ? customPosX : 10.0f;
+            float targetY = (customPosY >= 0.0f) ? customPosY : 30.0f;
+            float targetW = (customWidth > 0.0f) ? customWidth : neededW;
+            float targetH = (customHeight > 0.0f) ? customHeight : neededH;
+            ImGui::SetNextWindowPos(ImVec2(targetX, targetY), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(targetW, targetH), ImGuiCond_Always);
             ImGui::SetNextWindowCollapsed(false, ImGuiCond_Always);
             resetLayoutRequested = false;
         }
@@ -688,10 +743,23 @@ namespace isobus_vt
             ImGui::SetNextWindowCollapsed(false, ImGuiCond_Appearing);
         }
 
-        ImGui::Begin("ISOBUS Universal Terminal (VT Server)", nullptr,
+        std::string winTitle = "ISOBUS Universal Terminal (VT v" + std::to_string(cfg.vtVersion) + ")###VTServer";
+        ImGui::Begin(winTitle.c_str(), nullptr,
                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse);
 
         auto ws     = vtServer->get_active_ws();
+        if (!ws)
+        {
+            for (auto &w : vtServer->get_all_ws())
+            {
+                if (w && w->get_working_set_object() != nullptr)
+                {
+                    vtServer->select_working_set(w);
+                    ws = w;
+                    break;
+                }
+            }
+        }
         bool isWsReady = (ws != nullptr) &&
                          (ws->get_working_set_object() != nullptr) &&
                          (ws->get_object_pool_processing_state() != isobus::VirtualTerminalServerManagedWorkingSet::ObjectPoolProcessingThreadState::Running);
@@ -700,6 +768,18 @@ namespace isobus_vt
         AudioBeeper::get_instance().update_alarm_loop(vtServer->is_alarm_active());
 
         auto maskId = isWsReady ? vtServer->get_active_data_mask_id() : isobus::NULL_OBJECT_ID;
+        if (isWsReady && maskId == isobus::NULL_OBJECT_ID)
+        {
+            const auto &tree = ws->get_object_tree();
+            for (const auto &[id, obj] : tree)
+            {
+                if (obj && obj->get_object_type() == isobus::VirtualTerminalObjectType::DataMask)
+                {
+                    maskId = id;
+                    break;
+                }
+            }
+        }
         auto skId   = isWsReady ? vtServer->get_active_soft_key_mask_id() : isobus::NULL_OBJECT_ID;
 
         // Fallback 1: soft key mask from the active data mask object
@@ -733,7 +813,7 @@ namespace isobus_vt
         ImVec2 origin = ImGui::GetCursorScreenPos();
         ImDrawList *dl = ImGui::GetWindowDrawList();
 
-        const auto &cfg = TerminalSettings::get_instance().get_config();
+// removed duplicate cfg
 
         // Outer bezel styling (Müller-Elektronik TOUCH800, Modern Glass, Minimalist, Rugged)
         float topHeaderH = 0.0f;
@@ -787,7 +867,8 @@ namespace isobus_vt
             dl->AddRectFilled(ImVec2(barX + 4.0f, barY + 3.0f), ImVec2(barX + 32.0f, barY + barH - 3.0f), IM_COL32(14, 88, 185, 255), 3.0f);
             dl->AddText(ImVec2(barX + 7.0f, barY + 4.0f), IM_COL32(255, 255, 255, 255), "ME");
             dl->AddText(ImVec2(barX + 38.0f, barY + 4.0f), IM_COL32(255, 255, 255, 255), "M\xc3\x9cLLER-ELEKTRONIK");
-            dl->AddText(ImVec2(barX + 215.0f, barY + 4.0f), IM_COL32(14, 135, 250, 255), "TOUCH800");
+            std::string meHeader = "TOUCH800 (VT v" + std::to_string(cfg.vtVersion) + ")";
+            dl->AddText(ImVec2(barX + 215.0f, barY + 4.0f), IM_COL32(14, 135, 250, 255), meHeader.c_str());
 
             // Center: Active Application / Implement Model Badge
             std::string centerTitle = isWsReady ? "TITAN-XT 16000 ULTRA" : "SYSTEM STANDBY";
@@ -1259,10 +1340,17 @@ namespace isobus_vt
 
     void VTRenderer::render_data_mask(ImDrawList *dl, ImVec2 pos, ImVec2 size,
                                       std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet> ws,
-                                      std::uint16_t maskId)
+                                      std::uint16_t maskId,
+                                      bool interactive)
     {
+        if (!ws) return;
         auto maskObj = ws->get_object_by_id(maskId);
         if (!maskObj) return;
+
+        float configMaskPx = static_cast<float>(vtServer->get_configured_mask_size());
+        if (configMaskPx <= 0.0f) configMaskPx = 480.0f;
+        float effectiveScale = std::min(size.x / configMaskPx, size.y / configMaskPx);
+        if (effectiveScale <= 0.001f) effectiveScale = maskScale;
 
         ImU32 bg = get_imgui_color(ws, maskObj->get_background_color(), IM_COL32(220, 220, 220, 255));
         dl->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y), bg, 4.0f);
@@ -1271,20 +1359,26 @@ namespace isobus_vt
         ImVec2 clipMax(pos.x + size.x, pos.y + size.y);
         dl->PushClipRect(pos, clipMax, true);
 
-        for (std::uint16_t i = 0; i < maskObj->get_number_children(); ++i)
+        try
         {
-            auto cObj = ws->get_object_by_id(maskObj->get_child_id(i));
-            if (cObj)
+            for (std::uint16_t i = 0; i < maskObj->get_number_children(); ++i)
             {
-                render_object(dl, pos, ws, cObj,
-                              maskObj->get_child_x(i),
-                              maskObj->get_child_y(i),
-                              maskId,
-                              maskScale);
+                auto cObj = ws->get_object_by_id(maskObj->get_child_id(i));
+                if (cObj)
+                {
+                    render_object(dl, pos, ws, cObj,
+                                  maskObj->get_child_x(i),
+                                  maskObj->get_child_y(i),
+                                  maskId,
+                                  effectiveScale);
+                }
             }
         }
+        catch (...) {}
 
         dl->PopClipRect();
+
+        if (!interactive) return;
 
         // ── DataMask Centralized Mouse Interaction (AgIsoVT architecture) ──
         ImGui::SetCursorScreenPos(pos);
@@ -2075,14 +2169,15 @@ namespace isobus_vt
         dl->AddRectFilled(barPos, ImVec2(barPos.x + barSize.x, barPos.y + barSize.y), barBg, 4.0f);
         dl->AddRect(barPos, ImVec2(barPos.x + barSize.x, barPos.y + barSize.y), barBorder, 4.0f, 0, isMuller ? 2.0f : 1.5f);
 
-        // Use configured SK row count
-        int numKeys = static_cast<int>(vtServer->get_configured_sk_rows());
-        if (numKeys < 1) numKeys = 1;
-        if (numKeys > 12) numKeys = 12;
+        // Use configured SK row & column counts
+        int numRows = std::max(1, static_cast<int>(vtServer->get_configured_sk_rows()));
+        if (numRows > 16) numRows = 16;
+        int numCols = std::max(1, static_cast<int>(vtServer->get_configured_sk_columns()));
+        if (numCols > 4) numCols = 4;
 
-        float keySpacing = 7.0f;
-        float keyHeight  = (barSize.y - keySpacing * (numKeys + 1)) / static_cast<float>(numKeys);
-        float keyWidth   = barSize.x - 12.0f;
+        float keySpacing = 6.0f;
+        float keyWidth   = (barSize.x - keySpacing * (numCols + 1)) / static_cast<float>(numCols);
+        float keyHeight  = (barSize.y - keySpacing * (numRows + 1)) / static_cast<float>(numRows);
 
         // Resolve the SoftKeyMask object
         auto skMaskObj = (ws && softKeyMaskId != isobus::NULL_OBJECT_ID)
@@ -2096,11 +2191,16 @@ namespace isobus_vt
             dl->AddText(tip, IM_COL32(255, 100, 80, 200), "no SKM");
         }
 
-        for (int i = 0; i < numKeys; ++i)
+        for (int col = 0; col < numCols; ++col)
         {
-            ImVec2 kPos(barPos.x + 6.0f, barPos.y + keySpacing + i * (keyHeight + keySpacing));
-            ImVec2 kSize(keyWidth, keyHeight);
-            ImVec2 kMax(kPos.x + keyWidth, kPos.y + keyHeight);
+            for (int row = 0; row < numRows; ++row)
+            {
+                int i = col * numRows + row;
+
+                ImVec2 kPos(barPos.x + keySpacing + col * (keyWidth + keySpacing),
+                            barPos.y + keySpacing + row * (keyHeight + keySpacing));
+                ImVec2 kSize(keyWidth, keyHeight);
+                ImVec2 kMax(kPos.x + keyWidth, kPos.y + keyHeight);
 
             // InvisibleButton FIRST — sets up ImGui item for hit-testing
             ImGui::SetCursorScreenPos(kPos);
@@ -2234,6 +2334,7 @@ namespace isobus_vt
             ImVec2 lblSz = ImGui::CalcTextSize(lbl.c_str());
             dl->AddText(ImVec2(kMax.x - lblSz.x - 3.0f, kMax.y - lblSz.y - 2.0f),
                         IM_COL32(80, 90, 110, 200), lbl.c_str());
+            }
         }
     }
 
@@ -2588,9 +2689,9 @@ namespace isobus_vt
 
                         int skCols = cfg.skColumns;
                         ImGui::SetNextItemWidth(120.0f);
-                        if (ImGui::InputInt("Liczba kolumn klawiszy (1-2)", &skCols, 1, 1))
+                        if (ImGui::InputInt("Liczba kolumn klawiszy (1-4)", &skCols, 1, 1))
                         {
-                            cfg.skColumns = std::max(1, std::min(2, skCols));
+                            cfg.skColumns = std::max(1, std::min(4, skCols));
                             vtServer->set_sk_columns(static_cast<std::uint8_t>(cfg.skColumns));
                         }
 
@@ -2634,11 +2735,11 @@ namespace isobus_vt
                         ImGui::EndTabItem();
                     }
 
-                    // ── Tab 3: 🛰️ AgOpenGPS & Task Controller ──
-                    if (ImGui::BeginTabItem(" 🛰️ AgOpenGPS & TC "))
+                    // ── Tab 3: 🌾 Task Controller & Sekcje ──
+                    if (ImGui::BeginTabItem(" 🌾 Task Controller "))
                     {
                         ImGui::Spacing();
-                        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Integracja z Task Controllerem (TC-BAS / TC-SC) i AgOpenGPS:");
+                        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Konfiguracja Task Controllera (TC-BAS / TC-SC) i kontroli sekcji:");
                         ImGui::Separator();
 
                         ImGui::Checkbox("Wlacz Task Controller (TC-BAS / TC-SC / TC-GEO na CAN)", &cfg.tcEnabled);
@@ -2648,10 +2749,10 @@ namespace isobus_vt
                         ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Konfiguracja portow sieciowych mostka UDP:");
 
                         ImGui::SetNextItemWidth(140.0f);
-                        ImGui::InputInt("Port nasluchu z AOG/AGIO (Rx)##aog", &cfg.aogRxPort);
+                        ImGui::InputInt("Port nasluchu telemetrii/GPS (Rx)##tc", &cfg.aogRxPort);
 
                         ImGui::SetNextItemWidth(140.0f);
-                        ImGui::InputInt("Port nadawania do AgOpenGPS (Tx)##aog", &cfg.aogTxPort);
+                        ImGui::InputInt("Port nadawania sekcji (Tx)##tc", &cfg.aogTxPort);
 
                         char subnetBuf[32];
                         strncpy_s(subnetBuf, cfg.aogSubnet.c_str(), sizeof(subnetBuf));
@@ -2668,12 +2769,12 @@ namespace isobus_vt
                             ImGui::Spacing();
                             ImGui::Separator();
                             ImGui::Spacing();
-                            ImGui::Text("Status polaczenia AgOpenGPS:");
+                            ImGui::Text("Status polaczenia kontrolera sekcji:");
                             ImGui::SameLine();
                             if (tcManager->is_aog_connected())
                                 ImGui::TextColored(ImVec4(0.2f, 0.9f, 0.2f, 1.0f), "[ POLACZONY ]");
                             else
-                                ImGui::TextColored(ImVec4(0.9f, 0.6f, 0.2f, 1.0f), "[ OCZEKIWANIE NA AGIO / AGOPENGPS ]");
+                                ImGui::TextColored(ImVec4(0.9f, 0.6f, 0.2f, 1.0f), "[ OCZEKIWANIE NA DANE UDP / GPS ]");
 
                             ImGui::BulletText("Predkosc ciagnika z GPS: %.1f km/h", tcManager->get_speed_kph());
                             ImGui::BulletText("Wykryte sekcje implementu: %u sekcji", tcManager->get_num_sections());
@@ -2716,7 +2817,7 @@ namespace isobus_vt
                         ImGui::Spacing();
                         ImGui::Separator();
                         ImGui::Spacing();
-                        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Tryb Nakladki HUD na AgOpenGPS:");
+                        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Tryb Nakladki HUD (Overlay):");
                         const char* dockSideOptions[] = { "Dokuj do Prawej", "Dokuj do Lewej", "Okno Plywajace" };
                         ImGui::SetNextItemWidth(200.0f);
                         ImGui::Combo("Pozycja dokowania HUD", &cfg.hudDockSide, dockSideOptions, 3);
@@ -2888,6 +2989,16 @@ namespace isobus_vt
                 {
                     save_settings();
                     ts.save();
+        if (vtServer)
+        {
+            vtServer->apply_language_command_settings(
+                cfg.langCode,
+                cfg.countryCode,
+                cfg.unitDecimal,
+                cfg.unitDate,
+                cfg.unitArea
+            );
+        }
                     settingsSavedNotification = true;
                     settingsSavedTimer = 3.5f;
                     ts.play_touch_beep();
@@ -2900,6 +3011,16 @@ namespace isobus_vt
                     ts.reset_to_defaults();
                     load_settings();
                     ts.save();
+        if (vtServer)
+        {
+            vtServer->apply_language_command_settings(
+                cfg.langCode,
+                cfg.countryCode,
+                cfg.unitDecimal,
+                cfg.unitDate,
+                cfg.unitArea
+            );
+        }
                     settingsSavedNotification = true;
                     settingsSavedTimer = 2.0f;
                     ts.play_touch_beep();
@@ -2930,29 +3051,43 @@ namespace isobus_vt
             // VT Version
             using VTV = isobus::VirtualTerminalBase::VTVersion;
             const char* vtVerNames[] = {
-                "Version 2 or Older", "Version 3", "Version 4", "Version 5", "Version 6"
+                "Wersja 2 lub starsza (VT v2)",
+                "Wersja 3 (VT v3)",
+                "Wersja 4 (VT v4 - Standard ISO)",
+                "Wersja 5 (VT v5)",
+                "Wersja 6 (VT v6 - Extended 32B)"
             };
+            const int vtVerNumbers[] = { 2, 3, 4, 5, 6 };
             const VTV vtVerVals[] = {
                 VTV::Version2OrOlder, VTV::Version3, VTV::Version4, VTV::Version5, VTV::Version6
             };
-            VTV curVer = vtServer->get_configured_version();
+            int curVerNum = vt_version_to_int(vtServer->get_configured_version());
             int curVerIdx = 2;
             for (int i = 0; i < 5; ++i)
-                if (vtVerVals[i] == curVer) { curVerIdx = i; break; }
+                if (vtVerNumbers[i] == curVerNum) { curVerIdx = i; break; }
 
-            ImGui::SetNextItemWidth(220.0f);
+            ImGui::SetNextItemWidth(260.0f);
             if (ImGui::Combo("VT Version", &curVerIdx, vtVerNames, 5))
+            {
                 vtServer->set_vt_version(vtVerVals[curVerIdx]);
+                auto &tsCfg = TerminalSettings::get_instance().get_config();
+                tsCfg.vtVersion = vtVerNumbers[curVerIdx];
+                save_settings();
+            }
 
             ImGui::Separator();
 
             // Data Mask Size
             int maskPx = static_cast<int>(vtServer->get_configured_mask_size());
-            ImGui::SetNextItemWidth(110.0f);
-            if (ImGui::InputInt("Data Mask Size px (kwadrat)", &maskPx, 8, 32))
+            ImGui::SetNextItemWidth(120.0f);
+            if (ImGui::InputInt("Data Mask Size px", &maskPx, 16, 64))
             {
-                maskPx = std::max(60, std::min(1024, maskPx));
+                maskPx = std::max(60, std::min(1920, maskPx));
                 vtServer->set_data_mask_size(static_cast<std::uint16_t>(maskPx));
+                auto &tsCfg = TerminalSettings::get_instance().get_config();
+                tsCfg.dataMaskSize = maskPx;
+                tsCfg.dataMaskWidth = maskPx;
+                tsCfg.dataMaskHeight = maskPx;
                 save_settings();
             }
 
@@ -2961,18 +3096,22 @@ namespace isobus_vt
             // SK descriptor dimensions
             int skW = static_cast<int>(vtServer->get_configured_sk_width());
             int skH = static_cast<int>(vtServer->get_configured_sk_height());
-            ImGui::SetNextItemWidth(110.0f);
-            if (ImGui::InputInt("SK Designator Width px (min 60)", &skW, 1, 10))
+            ImGui::SetNextItemWidth(120.0f);
+            if (ImGui::InputInt("SK Designator Width px", &skW, 5, 10))
             {
-                skW = std::max(60, skW);
-                vtServer->set_sk_desc_width(static_cast<std::uint8_t>(std::min(skW, 255)));
+                skW = std::max(40, std::min(255, skW));
+                vtServer->set_sk_desc_width(static_cast<std::uint8_t>(skW));
+                auto &tsCfg = TerminalSettings::get_instance().get_config();
+                tsCfg.skDescWidth = skW;
                 save_settings();
             }
-            ImGui::SetNextItemWidth(110.0f);
-            if (ImGui::InputInt("SK Designator Height px (min 60)", &skH, 1, 10))
+            ImGui::SetNextItemWidth(120.0f);
+            if (ImGui::InputInt("SK Designator Height px", &skH, 5, 10))
             {
-                skH = std::max(60, skH);
-                vtServer->set_sk_desc_height(static_cast<std::uint8_t>(std::min(skH, 255)));
+                skH = std::max(40, std::min(255, skH));
+                vtServer->set_sk_desc_height(static_cast<std::uint8_t>(skH));
+                auto &tsCfg = TerminalSettings::get_instance().get_config();
+                tsCfg.skDescHeight = skH;
                 save_settings();
             }
 
@@ -2981,19 +3120,45 @@ namespace isobus_vt
             // SK layout
             int skCols = static_cast<int>(vtServer->get_configured_sk_columns());
             int skRows2 = static_cast<int>(vtServer->get_configured_sk_rows());
-            ImGui::SetNextItemWidth(80.0f);
-            if (ImGui::InputInt("SK Columns (min 1)", &skCols, 1, 1))
+            ImGui::SetNextItemWidth(120.0f);
+            if (ImGui::InputInt("SK Columns (1 - 4)", &skCols, 1, 1))
             {
-                skCols = std::max(1, skCols);
-                vtServer->set_sk_columns(static_cast<std::uint8_t>(std::min(skCols, 8)));
+                skCols = std::max(1, std::min(4, skCols));
+                vtServer->set_sk_columns(static_cast<std::uint8_t>(skCols));
+                auto &tsCfg = TerminalSettings::get_instance().get_config();
+                tsCfg.skColumns = skCols;
                 save_settings();
             }
-            ImGui::SetNextItemWidth(80.0f);
-            if (ImGui::InputInt("SK Rows (min 1)", &skRows2, 1, 1))
+            ImGui::SetNextItemWidth(120.0f);
+            if (ImGui::InputInt("SK Rows (1 - 16)", &skRows2, 1, 1))
             {
-                skRows2 = std::max(1, skRows2);
-                vtServer->set_sk_rows(static_cast<std::uint8_t>(std::min(skRows2, 16)));
+                skRows2 = std::max(1, std::min(16, skRows2));
+                vtServer->set_sk_rows(static_cast<std::uint8_t>(skRows2));
+                auto &tsCfg = TerminalSettings::get_instance().get_config();
+                tsCfg.skRows = skRows2;
                 save_settings();
+            }
+
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f),
+                "Podsumowanie: VT v%d | Klawisze: %d kol. x %d wierszy = %d (F1..F%d)",
+                curVerNum, skCols, skRows2, skCols * skRows2, skCols * skRows2);
+
+            ImGui::Spacing();
+            if (ImGui::Button(" ⟳ Zastosuj i przeladuj sesje VT / CAN ", ImVec2(-1, 32)))
+            {
+                save_settings();
+                if (vtServer)
+                    vtServer->clear_disk_cache();
+                if (canManager)
+                    canManager->reconnect();
+                settingsSavedNotification = true;
+                settingsSavedTimer = 3.5f;
+            }
+            if (settingsSavedTimer > 0.0f)
+            {
+                ImGui::TextColored(ImVec4(0.2f, 0.95f, 0.4f, 1.0f),
+                    "✔ Nowa konfiguracja aktywna! Przeladowano magistrale CAN.");
             }
 
             ImGui::Separator();
@@ -3062,6 +3227,7 @@ namespace isobus_vt
     void VTRenderer::render_mini_views_window(bool *p_open)
     {
         if (p_open && !*p_open) return;
+        std::lock_guard<std::recursive_mutex> lock(vtServer->get_server_mutex());
 
         ImGui::SetNextWindowSize(ImVec2(340, 520), ImGuiCond_FirstUseEver);
         if (!ImGui::Begin("Podglad Maszyn w Tle (Mini-Views)###MiniViews", p_open, ImGuiWindowFlags_NoCollapse))
@@ -3143,7 +3309,7 @@ namespace isobus_vt
 
                 if (maskId != isobus::NULL_OBJECT_ID)
                 {
-                    render_data_mask(dl, canvasPos, ImVec2(miniSize, miniSize), currentWs, maskId);
+                    render_data_mask(dl, canvasPos, ImVec2(miniSize, miniSize), currentWs, maskId, false);
                 }
                 else
                 {

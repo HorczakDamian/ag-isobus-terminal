@@ -1,0 +1,20 @@
+{
+  "farmName": "Gospodarstwo Rolne Jan Kowalski",
+  "farmAddress": "ul. Rolna 15, 00-001 Polskie Pole",
+  "producerNumberArimr": "067123456",
+  "commune": "Gmina Przykładowa",
+  "defaultPrecinct": "Obręb 0012",
+  "sprayerModel": "Krukowiak Gollat 2500/21 (ISOBUS)",
+  "sprayerSerialNo": "KRUK-2022-841",
+  "sprayerInspectionNo": "BAD-OPR/0412/2024",
+  "sprayerInspectionDate": "2024-05-20",
+  "sprayerInspectionValidUntil": "2027-05-20",
+  "sprayerBoomWidthM": 21,
+  "sprayerTankVolumeL": 2500,
+  "nozzleType": "Eżektorowe dwustrumieniowe IDTA 120-03",
+  "operatorName": "Jan Kowalski",
+  "operatorCertificateNo": "ŚOR/WA/2023/00841",
+  "operatorCertificateValidUntil": "2028-06-15",
+  "parcels": [
+  ]
+}

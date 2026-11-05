@@ -1,4 +1,6 @@
 #include "CanManager.hpp"
+#include "TractorEcuManager.hpp"
+#include "isobus/hardware_integration/PCANBasic.h"
 #include "isobus/isobus/can_identifier.hpp"
 #include "isobus/isobus/can_stack_logger.hpp"
 #include "isobus/utility/system_timing.hpp"
@@ -39,6 +41,8 @@ namespace isobus_vt
 
         if (driverType == CanDriverType::PeakPcan)
         {
+            CAN_Uninitialize(static_cast<TPCANHandle>(currentPcanChannel));
+            CAN_Uninitialize(PCAN_NONEBUS);
             activeDriver = std::make_shared<isobus::PCANBasicWindowsPlugin>(static_cast<WORD>(currentPcanChannel));
         }
         else
@@ -74,6 +78,10 @@ namespace isobus_vt
         if (isobus::CANHardwareInterface::is_running())
         {
             isobus::CANHardwareInterface::stop();
+        }
+        if (currentDriverType == CanDriverType::PeakPcan)
+        {
+            CAN_Uninitialize(static_cast<TPCANHandle>(currentPcanChannel));
         }
         connected = false;
         activeDriver = nullptr;
@@ -322,10 +330,25 @@ namespace isobus_vt
         // Process J1939 DM1/DM2 diagnostics
         process_j1939_diagnostics(frame);
 
-        if (logPaused)
-            return;
+        // Forward to TractorEcuManager if configured as SharedWithCan1
+        if (TractorEcuManager::get_instance().get_source() == TractorCanSource::SharedWithCan1)
+        {
+            TractorEcuManager::get_instance().process_can_frame(frame.identifier, frame.data, frame.dataLength);
+        }
 
         isobus::CANIdentifier id(frame.identifier);
+
+        if (id.get_source_address() == 132)
+        {
+            char buf[128];
+            snprintf(buf, sizeof(buf), "[RAW CAN RX 132] ID: 0x%08X (PGN: 0x%05X, DA: 0x%02X) [DLC %u]: %02X %02X %02X %02X %02X %02X %02X %02X",
+                     frame.identifier, id.get_parameter_group_number(), id.get_destination_address(), frame.dataLength,
+                     frame.data[0], frame.data[1], frame.data[2], frame.data[3], frame.data[4], frame.data[5], frame.data[6], frame.data[7]);
+            isobus::CANStackLogger::info(buf);
+        }
+
+        if (logPaused)
+            return;
 
         CanLogEntry entry;
         entry.timestampMs = now;
@@ -352,11 +375,20 @@ namespace isobus_vt
         std::uint32_t frameBits = static_cast<std::uint32_t>((67 + 8 * frame.dataLength) * 1.15f);
         bitsLastSecond += frameBits;
 
-        if (logPaused)
-            return;
-
         auto now = isobus::SystemTiming::get_timestamp_ms();
         isobus::CANIdentifier id(frame.identifier);
+
+        if (id.get_destination_address() == 132 || id.get_source_address() == 132)
+        {
+            char buf[128];
+            snprintf(buf, sizeof(buf), "[RAW CAN TX to 132] ID: 0x%08X (PGN: 0x%05X, DA: 0x%02X) [DLC %u]: %02X %02X %02X %02X %02X %02X %02X %02X",
+                     frame.identifier, id.get_parameter_group_number(), id.get_destination_address(), frame.dataLength,
+                     frame.data[0], frame.data[1], frame.data[2], frame.data[3], frame.data[4], frame.data[5], frame.data[6], frame.data[7]);
+            isobus::CANStackLogger::info(buf);
+        }
+
+        if (logPaused)
+            return;
 
         CanLogEntry entry;
         entry.timestampMs = now;

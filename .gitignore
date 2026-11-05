@@ -39,6 +39,15 @@ docs/
 tools/
 AgIsoStack-plus-plus-main/
 AgIsoStack*/
+ESP32_ISOBUS-master/
+NeptuneGPS_Triton-main/
+arduino_uno_isobus_machine/
+isobus_sdk/
+
+# Runtime task data & reports
+Raporty_SOR/
+TASKDATA/
+aux_inputs/
 
 # Whitelist AgOpenGPS & AOG-TaskController suites
 !agopen/

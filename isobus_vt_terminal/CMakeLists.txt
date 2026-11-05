@@ -10,25 +10,26 @@ project(
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Enable both Windows PCAN Basic and Virtual CAN
-set(CAN_DRIVER "WindowsPCANBasic;VirtualCAN" CACHE STRING "CAN drivers to build" FORCE)
+set(ISOBUS_SDK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../isobus_sdk")
 
-# Add AgIsoStack++ library (local folder if present, or auto-fetch via Git)
-include(FetchContent)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../AgIsoStack-plus-plus-main/CMakeLists.txt")
-  add_subdirectory(
-    "${CMAKE_CURRENT_SOURCE_DIR}/../AgIsoStack-plus-plus-main"
-    "${CMAKE_CURRENT_BINARY_DIR}/ag_isostack"
-  )
-else()
-  message(STATUS "AgIsoStack++ not found locally, fetching from GitHub...")
-  FetchContent_Declare(
-    agisostack
-    GIT_REPOSITORY https://github.com/Open-Agriculture/AgIsoStack-plus-plus.git
-    GIT_TAG main
-  )
-  FetchContent_MakeAvailable(agisostack)
-endif()
+# Precompiled ISOBUS libraries
+add_library(Isobus STATIC IMPORTED GLOBAL)
+set_target_properties(Isobus PROPERTIES
+  IMPORTED_LOCATION "${ISOBUS_SDK_DIR}/lib/Isobus.lib"
+  INTERFACE_INCLUDE_DIRECTORIES "${ISOBUS_SDK_DIR}/include"
+)
+
+add_library(HardwareIntegration STATIC IMPORTED GLOBAL)
+set_target_properties(HardwareIntegration PROPERTIES
+  IMPORTED_LOCATION "${ISOBUS_SDK_DIR}/lib/HardwareIntegration.lib"
+  INTERFACE_INCLUDE_DIRECTORIES "${ISOBUS_SDK_DIR}/include"
+)
+
+add_library(Utility STATIC IMPORTED GLOBAL)
+set_target_properties(Utility PROPERTIES
+  IMPORTED_LOCATION "${ISOBUS_SDK_DIR}/lib/Utility.lib"
+  INTERFACE_INCLUDE_DIRECTORIES "${ISOBUS_SDK_DIR}/include"
+)
 
 # ImGui sources
 set(IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../imgui_src")
@@ -46,6 +47,8 @@ set(IMGUI_SOURCES
 set(VT_TERMINAL_SOURCES
   "AudioBeeper.hpp"
   "AudioBeeper.cpp"
+  "FieldNavigation.hpp"
+  "FieldNavigation.cpp"
   "TerminalSettings.hpp"
   "TerminalSettings.cpp"
   "SplashScreen.hpp"
@@ -60,6 +63,10 @@ set(VT_TERMINAL_SOURCES
   "TaskControllerManager.cpp"
   "VTRenderer.hpp"
   "VTRenderer.cpp"
+  "TractorEcuManager.hpp"
+  "TractorEcuManager.cpp"
+  "TcBasReportManager.hpp"
+  "TcBasReportManager.cpp"
   "main.cpp"
   ${IMGUI_SOURCES}
 )
@@ -70,25 +77,37 @@ target_include_directories(isobus_vt_terminal PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}"
   "${IMGUI_DIR}"
   "${IMGUI_DIR}/backends"
-  "${CMAKE_CURRENT_SOURCE_DIR}/../AgIsoStack-plus-plus-main/isobus/include"
-  "${CMAKE_CURRENT_SOURCE_DIR}/../AgIsoStack-plus-plus-main/hardware_integration/include"
-  "${CMAKE_CURRENT_SOURCE_DIR}/../AgIsoStack-plus-plus-main/utility/include"
+  "${ISOBUS_SDK_DIR}/include"
 )
 
 target_link_libraries(isobus_vt_terminal PRIVATE
   Isobus
   HardwareIntegration
   Utility
+  "${ISOBUS_SDK_DIR}/lib/PCANBasic_x64.lib"
   d3d11
   d3dcompiler
   dxgi
   dbghelp
+  winmm
+  gdiplus
+  shell32
 )
 
 if(MSVC)
   target_compile_options(isobus_vt_terminal PRIVATE /W3 /utf-8 /Zi)
   target_link_options(isobus_vt_terminal PRIVATE /DEBUG)
 endif()
+
+add_custom_command(TARGET isobus_vt_terminal POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${CMAKE_CURRENT_SOURCE_DIR}/tractor_icons"
+    "$<TARGET_FILE_DIR:isobus_vt_terminal>/tractor_icons"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${CMAKE_CURRENT_SOURCE_DIR}/sor_database.json"
+    "$<TARGET_FILE_DIR:isobus_vt_terminal>/sor_database.json"
+  COMMENT "Copying tractor icons and sor_database.json to output directory"
+)
 
 # AgOpenGPS Task Controller Bridge Launcher (replaces standalone AOG-TaskController.exe)
 add_executable(AOG-TaskController "aog_bridge_main.cpp")

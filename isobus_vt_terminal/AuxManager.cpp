@@ -37,6 +37,7 @@ namespace isobus_vt
         joystickName.set_device_class(0);
         joystickName.set_function_code(static_cast<std::uint8_t>(isobus::NAME::Function::OperatorControlsMachineSpecific));
         joystickName.set_identity_number(0x7777);
+        joystickName.set_manufacturer_code(1407); // AEF Manufacturer Code
         joystickName.set_ecu_instance(0);
         joystickName.set_function_instance(0);
 

@@ -19,7 +19,7 @@ namespace isobus_vt
     {
     public:
         explicit CustomVTServer(std::shared_ptr<isobus::InternalControlFunction> controlFunctionToUse);
-        ~CustomVTServer() = default;
+        virtual ~CustomVTServer();
 
         // --- Pure virtual methods implementation ---
         bool get_is_enough_memory(std::uint32_t requestedMemory) const override;
@@ -72,8 +72,20 @@ namespace isobus_vt
                            isobus::VirtualTerminalObjectType targetObjectType);
         bool switch_working_set(std::size_t index);
 
+        std::recursive_mutex& get_server_mutex() const { return serverMutex; }
+        void install_synchronized_callbacks();
+        void remove_synchronized_callbacks();
+        static void synchronized_process_rx_message(const isobus::CANMessage &message, void *parent);
+
         // Flag to inform renderer of updates
         bool consume_repaint_flag();
+
+        // ISO 11783-7 Language & Localization command
+        void apply_language_command_settings(const std::string &langCode,
+                                             const std::string &countryCode,
+                                             int decimalSymbol,
+                                             int dateFormat,
+                                             int unitSystem);
 
         // Runtime VT configuration — setters
         void set_vt_version(isobus::VirtualTerminalBase::VTVersion v) { vtVersion = v; }
@@ -113,7 +125,7 @@ namespace isobus_vt
         std::map<std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet>, std::uint16_t> lastActiveDataMask;
 
         // Runtime-configurable VT capabilities
-        isobus::VirtualTerminalBase::VTVersion vtVersion{ isobus::VirtualTerminalBase::VTVersion::Version4 };
+        isobus::VirtualTerminalBase::VTVersion vtVersion{ isobus::VirtualTerminalBase::VTVersion::Version6 };
         std::uint16_t dataMaskSizePx{ 480 };
         std::uint8_t  skDescWidth{ 60 };
         std::uint8_t  skDescHeight{ 60 };
