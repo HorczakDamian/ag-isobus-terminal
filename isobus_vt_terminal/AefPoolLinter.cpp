@@ -332,7 +332,7 @@ namespace isobus_vt
 
     void AefPoolLinter::render_linter_window(bool *p_open)
     {
-        if (!p_open || !*p_open) return;
+        if (p_open && !*p_open) return;
 
         ImGui::SetNextWindowSizeConstraints(ImVec2(800, 540), ImVec2(1920, 1080));
         ImGui::SetNextWindowSize(ImVec2(920, 620), ImGuiCond_FirstUseEver);

@@ -728,7 +728,7 @@ namespace isobus_vt
     // =========================================================================
     void TractorEcuManager::render_tractor_dashboard(bool *p_open)
     {
-        if (!p_open || !*p_open) return;
+        if (p_open && !*p_open) return;
 
         // Skalowanie: Wygodne proporcje, brak ucinania tekstu
         ImGui::SetNextWindowSizeConstraints(ImVec2(600, 580), ImVec2(1920, 1080));
@@ -934,7 +934,7 @@ namespace isobus_vt
     // =========================================================================
     void TractorEcuManager::render_pgn_config_dialog(bool *p_open)
     {
-        if (!p_open || !*p_open) return;
+        if (p_open && !*p_open) return;
 
         ImGui::SetNextWindowSizeConstraints(ImVec2(640, 520), ImVec2(1920, 1080));
         ImGui::SetNextWindowSize(ImVec2(740, 600), ImGuiCond_FirstUseEver);

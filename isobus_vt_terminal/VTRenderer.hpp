@@ -17,7 +17,7 @@ namespace isobus_vt
         VTRenderer(std::shared_ptr<CustomVTServer> vtServer);
         ~VTRenderer() { save_settings(); }
 
-        void render_terminal_window();
+        void render_terminal_window(bool embedded = false, ImVec2 pos = ImVec2(0, 0), ImVec2 size = ImVec2(0, 0));
         void render_mini_views_window(bool *p_open = nullptr);
         void reset_layout(float posX = -1.0f, float posY = -1.0f, float width = -1.0f, float height = -1.0f)
         {

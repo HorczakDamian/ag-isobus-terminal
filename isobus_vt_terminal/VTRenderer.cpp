@@ -699,7 +699,7 @@ namespace isobus_vt
 
     // ─────────────────────────────────────────────────────────────────────────────
 
-    void VTRenderer::render_terminal_window()
+    void VTRenderer::render_terminal_window(bool embedded, ImVec2 pos, ImVec2 size)
     {
         std::lock_guard<std::recursive_mutex> lock(vtServer->get_server_mutex());
         const auto &cfg = TerminalSettings::get_instance().get_config();
@@ -727,28 +727,43 @@ namespace isobus_vt
         float neededW = PADDING * 2.0f + WS_W + 4.0f + DATA_W + 4.0f + SK_W + 30.0f;
         float neededH = DATA_H + PADDING * 2.0f + 85.0f;
 
-        ImGui::SetNextWindowSizeConstraints(ImVec2(std::min(neededW, 360.0f), std::min(neededH, 280.0f)), ImVec2(FLT_MAX, FLT_MAX));
-        if (resetLayoutRequested)
+        if (embedded)
         {
-            float targetX = (customPosX >= 0.0f) ? customPosX : 10.0f;
-            float targetY = (customPosY >= 0.0f) ? customPosY : 30.0f;
-            float targetW = (customWidth > 0.0f) ? customWidth : neededW;
-            float targetH = (customHeight > 0.0f) ? customHeight : neededH;
-            ImGui::SetNextWindowPos(ImVec2(targetX, targetY), ImGuiCond_Always);
-            ImGui::SetNextWindowSize(ImVec2(targetW, targetH), ImGuiCond_Always);
-            ImGui::SetNextWindowCollapsed(false, ImGuiCond_Always);
-            resetLayoutRequested = false;
+            ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
+            ImGui::SetNextWindowSize(size, ImGuiCond_Always);
+            ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar |
+                                     ImGuiWindowFlags_NoResize |
+                                     ImGuiWindowFlags_NoMove |
+                                     ImGuiWindowFlags_NoScrollbar |
+                                     ImGuiWindowFlags_NoCollapse |
+                                     ImGuiWindowFlags_NoBackground;
+            ImGui::Begin("ISOBUS Universal Terminal (VT Server)###VTServerEmbedded", nullptr, flags);
         }
         else
         {
-            ImGui::SetNextWindowPos(ImVec2(10.0f, 38.0f), ImGuiCond_FirstUseEver);
-            ImGui::SetNextWindowSize(ImVec2(neededW, neededH), ImGuiCond_FirstUseEver);
-            ImGui::SetNextWindowCollapsed(false, ImGuiCond_Appearing);
-        }
+            ImGui::SetNextWindowSizeConstraints(ImVec2(std::min(neededW, 360.0f), std::min(neededH, 280.0f)), ImVec2(FLT_MAX, FLT_MAX));
+            if (resetLayoutRequested)
+            {
+                float targetX = (customPosX >= 0.0f) ? customPosX : 10.0f;
+                float targetY = (customPosY >= 0.0f) ? customPosY : 30.0f;
+                float targetW = (customWidth > 0.0f) ? customWidth : neededW;
+                float targetH = (customHeight > 0.0f) ? customHeight : neededH;
+                ImGui::SetNextWindowPos(ImVec2(targetX, targetY), ImGuiCond_Always);
+                ImGui::SetNextWindowSize(ImVec2(targetW, targetH), ImGuiCond_Always);
+                ImGui::SetNextWindowCollapsed(false, ImGuiCond_Always);
+                resetLayoutRequested = false;
+            }
+            else
+            {
+                ImGui::SetNextWindowPos(ImVec2(10.0f, 38.0f), ImGuiCond_FirstUseEver);
+                ImGui::SetNextWindowSize(ImVec2(neededW, neededH), ImGuiCond_FirstUseEver);
+                ImGui::SetNextWindowCollapsed(false, ImGuiCond_Appearing);
+            }
 
-        std::string winTitle = "ISOBUS Universal Terminal (VT v" + std::to_string(cfg.vtVersion) + ")###VTServer";
-        ImGui::Begin(winTitle.c_str(), nullptr,
-                     ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse);
+            std::string winTitle = "ISOBUS Universal Terminal (VT v" + std::to_string(cfg.vtVersion) + ")###VTServer";
+            ImGui::Begin(winTitle.c_str(), nullptr,
+                         ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse);
+        }
 
         auto ws     = vtServer->get_active_ws();
         if (!ws)
@@ -816,10 +831,18 @@ namespace isobus_vt
         ImVec2 origin = ImGui::GetCursorScreenPos();
         ImDrawList *dl = ImGui::GetWindowDrawList();
 
-// removed duplicate cfg
+        float topHeaderH = (cfg.bezelStyle == 0) ? 30.0f : 0.0f;
+        float totalVTWidth = PADDING * 2.0f + WS_W + 4.0f + DATA_W + 4.0f + SK_W;
+        float totalVTHeight = topHeaderH + DATA_H + PADDING * 2.0f;
+        if (embedded)
+        {
+            if (size.x > totalVTWidth)
+                origin.x += (size.x - totalVTWidth) * 0.5f;
+            if (size.y > totalVTHeight + 35.0f)
+                origin.y += (size.y - (totalVTHeight + 35.0f)) * 0.5f;
+        }
 
         // Outer bezel styling (Müller-Elektronik TOUCH800, Modern Glass, Minimalist, Rugged)
-        float topHeaderH = 0.0f;
         ImU32 bezelBg = IM_COL32(30, 32, 38, 255);
         ImU32 bezelBorder = IM_COL32(65, 70, 82, 255);
         float bezelRounding = 10.0f;

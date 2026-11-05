@@ -68,6 +68,7 @@ namespace isobus_vt
         bool showMiniViewsWindow = true;    // Podgląd maszyn w tle (Multi-Working Set Mini-Views)
 
         // ── Dockable HUD Overlay na AgOpenGPS ──
+        bool cockpitMode = true;        // Tryb Kabinowy (Prawdziwy Terminal ISOBUS)
         bool hudModeEnabled = false;        // Tryb kompaktowej nakładki HUD
         int hudDockSide = 0;                // 0 = Dokuj do Prawej, 1 = Dokuj do Lewej, 2 = Pływające
         float hudOpacity = 0.88f;           // Przezroczystość nakładki HUD (0.60 do 1.00)

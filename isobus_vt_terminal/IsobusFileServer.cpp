@@ -470,7 +470,7 @@ namespace isobus_vt
 
     void IsobusFileServer::render_file_server_window(bool *p_open)
     {
-        if (!p_open || !*p_open) return;
+        if (p_open && !*p_open) return;
 
         ImGui::SetNextWindowSizeConstraints(ImVec2(650, 480), ImVec2(1920, 1080));
         ImGui::SetNextWindowSize(ImVec2(750, 560), ImGuiCond_FirstUseEver);

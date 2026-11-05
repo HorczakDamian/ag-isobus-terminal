@@ -158,6 +158,7 @@ namespace isobus_vt
                 else if (key == "show_mini_views") config.showMiniViewsWindow = (std::stoi(val) != 0);
 
                 // [HUD Overlay]
+                else if (key == "cockpit_mode") config.cockpitMode = (std::stoi(val) != 0);
                 else if (key == "hud_mode") config.hudModeEnabled = (std::stoi(val) != 0);
                 else if (key == "hud_dock_side") config.hudDockSide = std::max(0, std::min(2, std::stoi(val)));
                 else if (key == "hud_opacity") config.hudOpacity = std::max(0.40f, std::min(1.0f, std::stof(val)));
@@ -250,6 +251,7 @@ namespace isobus_vt
             out << "show_mini_views=" << (config.showMiniViewsWindow ? 1 : 0) << "\n\n";
 
             out << "[HUD]\n";
+            out << "cockpit_mode=" << (config.cockpitMode ? 1 : 0) << "\n";
             out << "hud_mode=" << (config.hudModeEnabled ? 1 : 0) << "\n";
             out << "hud_dock_side=" << config.hudDockSide << "\n";
             out << "hud_opacity=" << config.hudOpacity << "\n";

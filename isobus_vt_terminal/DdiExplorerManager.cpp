@@ -161,7 +161,7 @@ namespace isobus_vt
 
     void DdiExplorerManager::render_ddi_explorer_window(bool *p_open)
     {
-        if (!p_open || !*p_open) return;
+        if (p_open && !*p_open) return;
 
         ImGui::SetNextWindowSizeConstraints(ImVec2(720, 520), ImVec2(1920, 1080));
         ImGui::SetNextWindowSize(ImVec2(850, 600), ImGuiCond_FirstUseEver);

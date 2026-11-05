@@ -311,6 +311,588 @@ private:
 
 static std::unique_ptr<TerminalFileLogger> g_TerminalLogger;
 
+enum class CockpitScreen {
+    TerminalVT = 0,
+    TaskController = 1,
+    TractorEcu = 2,
+    AuxJoystick = 3,
+    IsobusTools = 4
+};
+
+static CockpitScreen g_activeCockpitScreen = CockpitScreen::TerminalVT;
+static bool g_cockpitMode = true; // Domyślnie Tryb Kabinowy (Prawdziwy Terminal ISOBUS)
+static int g_toolsTab = 0;
+static float g_isbAlertTimer = 0.0f;
+
+static void RenderCockpitSideStrip(
+    std::shared_ptr<isobus_vt::CustomVTServer> vtServer,
+    std::shared_ptr<isobus_vt::TaskControllerManager> tcManager,
+    std::shared_ptr<isobus_vt::CanManager> canManager,
+    float posX, float posY, float width, float height)
+{
+    ImGui::SetNextWindowPos(ImVec2(posX, posY), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(width, height), ImGuiCond_Always);
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar |
+                             ImGuiWindowFlags_NoResize |
+                             ImGuiWindowFlags_NoMove |
+                             ImGuiWindowFlags_NoScrollbar |
+                             ImGuiWindowFlags_NoCollapse;
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.09f, 0.12f, 0.17f, 0.95f));
+    ImGui::Begin("##CockpitSideStrip", nullptr, flags);
+
+    // ── 1. BELKA KONTROLI SEKCJI (TC-SC) ──
+    ImGui::TextColored(ImVec4(0.25f, 0.95f, 0.45f, 1.0f), "KONTROLA SEKCJI (TC-SC)");
+    ImGui::SameLine(width - 95.0f);
+    bool isAuto = tcManager ? tcManager->is_auto_mode() : true;
+    ImGui::TextColored(isAuto ? ImVec4(0.2f, 1.0f, 0.4f, 1.0f) : ImVec4(1.0f, 0.8f, 0.2f, 1.0f),
+                       isAuto ? "[ AUTO ]" : "[ MANUAL ]");
+    ImGui::Separator();
+
+    std::vector<bool> secStates;
+    if (tcManager) secStates = tcManager->get_section_states();
+    if (secStates.empty()) secStates.resize(12, false);
+
+    bool isForce = tcManager ? tcManager->is_force_paint() : false;
+
+    // Draw 16 section nozzles in 2 rows of 8
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 cursor = ImGui::GetCursorScreenPos();
+    float boxW = (width - 40.0f) / 8.0f;
+    float boxH = 22.0f;
+
+    for (int r = 0; r < 2; ++r)
+    {
+        for (int c = 0; c < 8; ++c)
+        {
+            int s = r * 8 + c;
+            bool on = (s < static_cast<int>(secStates.size())) ? (secStates[s] || isForce) : false;
+            ImVec2 tl(cursor.x + c * (boxW + 3.0f), cursor.y + r * (boxH + 4.0f));
+            ImVec2 br(tl.x + boxW, tl.y + boxH);
+
+            ImU32 fillCol = on ? IM_COL32(34, 185, 75, 230) : IM_COL32(28, 35, 48, 200);
+            ImU32 borderCol = on ? IM_COL32(75, 245, 125, 255) : IM_COL32(50, 62, 82, 180);
+            dl->AddRectFilled(tl, br, fillCol, 4.0f);
+            dl->AddRect(tl, br, borderCol, 4.0f);
+
+            char sNum[8];
+            snprintf(sNum, sizeof(sNum), "%d", s + 1);
+            ImVec2 txtSz = ImGui::CalcTextSize(sNum);
+            dl->AddText(ImVec2(tl.x + (boxW - txtSz.x) * 0.5f, tl.y + (boxH - txtSz.y) * 0.5f),
+                        on ? IM_COL32(255, 255, 255, 255) : IM_COL32(140, 155, 175, 200), sNum);
+        }
+    }
+    ImGui::Dummy(ImVec2(0, boxH * 2.0f + 10.0f));
+
+    if (isForce)
+    {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.65f, 0.28f, 1.0f));
+        if (ImGui::Button("✔ WYMUSZENIE: WLACZONE##side", ImVec2(width - 24.0f, 28.0f)))
+        {
+            if (tcManager) tcManager->set_force_paint(false);
+            isobus_vt::TerminalSettings::get_instance().play_touch_beep();
+        }
+        ImGui::PopStyleColor();
+    }
+    else
+    {
+        if (ImGui::Button("⚡ Wymus malowanie w AgOpenGPS##side", ImVec2(width - 24.0f, 28.0f)))
+        {
+            if (tcManager) tcManager->set_force_paint(true);
+            isobus_vt::TerminalSettings::get_instance().play_touch_beep();
+        }
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // ── 2. TELEMETRIA CIĄGNIKA (TECU) ──
+    ImGui::TextColored(ImVec4(0.35f, 0.85f, 1.0f, 1.0f), "TECU / CIAGNIK (J1939)");
+    ImGui::Separator();
+
+    auto tecuTel = isobus_vt::TractorEcuManager::get_instance().get_telemetry();
+    float spd = tcManager ? tcManager->get_speed_kph() : 0.0f;
+    if (spd <= 0.1f) spd = tecuTel.groundSpeedKph;
+
+    ImGui::Columns(2, "##TecuQuickCols", false);
+    ImGui::TextDisabled("PREDKOSC");
+    ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%.1f km/h", spd);
+
+    ImGui::TextDisabled("WOM (PTO)");
+    ImVec4 ptoCol = tecuTel.isRearPtoActive ? ImVec4(0.2f, 1.0f, 0.4f, 1.0f) : ImVec4(0.6f, 0.65f, 0.75f, 1.0f);
+    ImGui::TextColored(ptoCol, "%.0f RPM", tecuTel.rearPtoRpm);
+
+    ImGui::NextColumn();
+
+    ImGui::TextDisabled("SILNIK");
+    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "%.0f RPM", tecuTel.engineRpm);
+
+    ImGui::TextDisabled("SPALANIE");
+    ImGui::TextColored(ImVec4(0.4f, 0.9f, 1.0f, 1.0f), "%.1f l/h", tecuTel.fuelRateLitersPerHour);
+    ImGui::Columns(1);
+
+    ImGui::Spacing();
+    ImGui::TextDisabled("POZYCJA TYLNEGO TUZ:");
+    float hitchFrac = std::max(0.0f, std::min(1.0f, tecuTel.rearHitchPositionPct / 100.0f));
+    char hitchLabel[32];
+    snprintf(hitchLabel, sizeof(hitchLabel), "%.0f%% (%s)", tecuTel.rearHitchPositionPct,
+             tecuTel.isRearHitchLowered ? "PRACA" : "TRANSPORT");
+    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, tecuTel.isRearHitchLowered ? ImVec4(0.2f, 0.85f, 0.4f, 1.0f) : ImVec4(0.9f, 0.6f, 0.15f, 1.0f));
+    ImGui::ProgressBar(hitchFrac, ImVec2(width - 24.0f, 20.0f), hitchLabel);
+    ImGui::PopStyleColor();
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // ── 3. PODŁĄCZONE MASZYNY ISOBUS ──
+    ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.35f, 1.0f), "MASZYNY NA MAGISTRALI CAN");
+    ImGui::Separator();
+
+    auto allWs = vtServer ? vtServer->get_all_ws() : std::vector<std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet>>();
+    auto curWs = vtServer ? vtServer->get_active_ws() : nullptr;
+
+    if (allWs.empty())
+    {
+        ImGui::TextDisabled("Oczekiwanie na maszyny CAN (250k)...");
+    }
+    else
+    {
+        for (size_t i = 0; i < allWs.size(); ++i)
+        {
+            auto w = allWs[i];
+            if (!w || !w->get_control_function()) continue;
+            std::uint8_t addr = w->get_control_function()->get_address();
+            bool isCur = (w == curWs);
+
+            char btnLbl[64];
+            snprintf(btnLbl, sizeof(btnLbl), "%s ECU 0x%02X (%u)##wsBtn%zu", isCur ? "[*]" : "   ", addr, addr, i);
+            if (isCur)
+            {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.45f, 0.25f, 1.0f));
+            }
+            if (ImGui::Button(btnLbl, ImVec2(width - 24.0f, 26.0f)))
+            {
+                if (vtServer) vtServer->switch_working_set(i);
+                isobus_vt::TerminalSettings::get_instance().play_touch_beep();
+            }
+            if (isCur) ImGui::PopStyleColor();
+        }
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // ── 4. SZYBKIE PRZEŁĄCZNIKI WIDOKU ──
+    if (ImGui::Button(" Otworz pelny Task Controller ", ImVec2(width - 24.0f, 28.0f)))
+    {
+        g_activeCockpitScreen = CockpitScreen::TaskController;
+        isobus_vt::TerminalSettings::get_instance().play_touch_beep();
+    }
+    if (ImGui::Button(" Otworz kokpit ciagnika ", ImVec2(width - 24.0f, 28.0f)))
+    {
+        g_activeCockpitScreen = CockpitScreen::TractorEcu;
+        isobus_vt::TerminalSettings::get_instance().play_touch_beep();
+    }
+    if (ImGui::Button(" Otworz diagnostyke CAN ", ImVec2(width - 24.0f, 28.0f)))
+    {
+        g_activeCockpitScreen = CockpitScreen::IsobusTools;
+        isobus_vt::TerminalSettings::get_instance().play_touch_beep();
+    }
+
+    ImGui::End();
+    ImGui::PopStyleColor();
+}
+
+static void RenderCockpitHeaderBar(
+    HWND hwnd,
+    std::shared_ptr<isobus_vt::CustomVTServer> vtServer,
+    std::shared_ptr<isobus_vt::CanManager> canManager,
+    std::shared_ptr<isobus_vt::TaskControllerManager> tcManager,
+    std::shared_ptr<isobus_vt::VTRenderer> vtRenderer,
+    float vpW)
+{
+    const auto &cfg = isobus_vt::TerminalSettings::get_instance().get_config();
+    ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(vpW, 46.0f), ImGuiCond_Always);
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration |
+                             ImGuiWindowFlags_NoMove |
+                             ImGuiWindowFlags_NoScrollbar |
+                             ImGuiWindowFlags_NoSavedSettings;
+
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06f, 0.08f, 0.12f, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 8.0f));
+    ImGui::Begin("##CockpitHeaderBar", nullptr, flags);
+
+    // 1. Console Brand Pill
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.32f, 0.18f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.30f, 0.95f, 0.55f, 1.0f));
+    ImGui::Button(" â AG-ISOBUS PRO 1200 ", ImVec2(0, 30.0f));
+    ImGui::PopStyleColor(2);
+
+    // 2. Connected Working Sets Switcher Pills
+    auto allWs = vtServer ? vtServer->get_all_ws() : std::vector<std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet>>();
+    auto curWs = vtServer ? vtServer->get_active_ws() : nullptr;
+
+    if (!allWs.empty())
+    {
+        for (size_t i = 0; i < allWs.size(); ++i)
+        {
+            auto w = allWs[i];
+            if (!w || !w->get_control_function()) continue;
+            std::uint8_t addr = w->get_control_function()->get_address();
+            bool isCur = (w == curWs);
+
+            char wsPill[32];
+            snprintf(wsPill, sizeof(wsPill), " ECU 0x%02X##wsPill%zu ", addr, i);
+
+            ImGui::SameLine();
+            if (isCur)
+            {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.65f, 0.30f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.75f, 0.38f, 1.0f));
+            }
+            else
+            {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.20f, 0.28f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.22f, 0.28f, 0.38f, 1.0f));
+            }
+            if (ImGui::Button(wsPill, ImVec2(0, 30.0f)))
+            {
+                if (vtServer) vtServer->switch_working_set(i);
+                isobus_vt::TerminalSettings::get_instance().play_touch_beep();
+            }
+            ImGui::PopStyleColor(2);
+        }
+    }
+
+    // 3. Right Status Badges
+    float rightGroupW = 680.0f;
+    float startX = std::max(ImGui::GetCursorPosX() + 10.0f, vpW - rightGroupW);
+    ImGui::SameLine(startX);
+
+    // CAN Badge
+    if (canManager)
+    {
+        float busLoad = canManager->get_bus_load();
+        if (canManager->is_connected())
+        {
+            ImVec4 lCol = (busLoad < 50.0f) ? ImVec4(0.2f, 0.9f, 0.4f, 1.0f) :
+                          (busLoad < 80.0f) ? ImVec4(1.0f, 0.8f, 0.2f, 1.0f) : ImVec4(1.0f, 0.3f, 0.2f, 1.0f);
+            ImGui::TextColored(lCol, "[ CAN: %4.1f%% ]", busLoad);
+        }
+        else
+        {
+            ImGui::TextColored(ImVec4(0.9f, 0.3f, 0.3f, 1.0f), "[ CAN: Offline ]");
+        }
+    }
+
+    // TC Badge
+    ImGui::SameLine();
+    if (!cfg.tcEnabled)
+    {
+        ImGui::TextColored(ImVec4(0.5f, 0.55f, 0.6f, 1.0f), "[ TC: Wyl. ]");
+    }
+    else
+    {
+        bool aogActive = tcManager ? tcManager->is_aog_connected() : false;
+        ImGui::TextColored(aogActive ? ImVec4(0.2f, 0.9f, 0.4f, 1.0f) : ImVec4(0.6f, 0.65f, 0.75f, 1.0f),
+                           aogActive ? "[ AOG TC: OK ]" : "[ TC: Czuwanie ]");
+    }
+
+    // TECU Badge
+    ImGui::SameLine();
+    if (!cfg.tecuEnabled)
+    {
+        ImGui::TextColored(ImVec4(0.5f, 0.55f, 0.6f, 1.0f), "[ TECU: Wyl. ]");
+    }
+    else
+    {
+        auto tecuTel = isobus_vt::TractorEcuManager::get_instance().get_telemetry();
+        bool tecuLive = isobus_vt::TractorEcuManager::get_instance().is_connected() && (tecuTel.totalFramesReceived > 0);
+        if (tecuLive)
+        {
+            ImGui::TextColored(tecuTel.isWorkConditionMet ? ImVec4(0.2f, 0.9f, 0.4f, 1.0f) : ImVec4(0.4f, 0.8f, 1.0f, 1.0f),
+                               tecuTel.isWorkConditionMet ? "[ TECU: PRACA ]" : "[ TECU: OK ]");
+        }
+        else
+        {
+            ImGui::TextColored(ImVec4(0.55f, 0.60f, 0.70f, 1.0f), "[ TECU: Czuwanie ]");
+        }
+    }
+
+    // System Clock
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    char clockBuf[16];
+    std::snprintf(clockBuf, sizeof(clockBuf), "%02d:%02d:%02d", st.wHour, st.wMinute, st.wSecond);
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(0.55f, 0.75f, 0.95f, 1.0f), "[ %s ]", clockBuf);
+
+    // ── 🛑 AEF ISB EMERGENCY ALL-STOP BUTTON ──
+    ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.15f, 0.15f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.98f, 0.22f, 0.22f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+    if (ImGui::Button(" â  ISB STOP ", ImVec2(0, 30.0f)))
+    {
+        if (tcManager) tcManager->set_force_paint(false);
+        isobus_vt::TcBasReportManager::get_instance().pause_task();
+        g_isbAlertTimer = 5.0f;
+        isobus_vt::TerminalSettings::get_instance().play_alarm_beep();
+    }
+    ImGui::PopStyleColor(3);
+
+    // Setup F2 Button
+    ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.35f, 0.24f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.48f, 0.32f, 1.0f));
+    if (ImGui::Button(" Setup (F2) ", ImVec2(0, 30.0f)))
+    {
+        if (vtRenderer) vtRenderer->open_settings_dialog();
+        isobus_vt::TerminalSettings::get_instance().play_touch_beep();
+    }
+    ImGui::PopStyleColor(2);
+
+    ImGui::End();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+}
+
+static void RenderCockpitBottomDock(HWND hwnd, float vpW, float vpH)
+{
+    ImGui::SetNextWindowPos(ImVec2(0, vpH - 52.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(vpW, 52.0f), ImGuiCond_Always);
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration |
+                             ImGuiWindowFlags_NoMove |
+                             ImGuiWindowFlags_NoScrollbar |
+                             ImGuiWindowFlags_NoSavedSettings;
+
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06f, 0.08f, 0.12f, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 6.0f));
+    ImGui::Begin("##CockpitBottomDock", nullptr, flags);
+
+    auto renderNavBtn = [](const char* label, CockpitScreen screen, float width = 0.0f) {
+        bool isActive = (g_activeCockpitScreen == screen);
+        if (isActive)
+        {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.65f, 0.30f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.22f, 0.75f, 0.35f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+        }
+        else
+        {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.14f, 0.18f, 0.25f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.26f, 0.36f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.88f, 0.95f, 1.0f));
+        }
+
+        if (ImGui::Button(label, ImVec2(width, 40.0f)))
+        {
+            g_activeCockpitScreen = screen;
+            isobus_vt::TerminalSettings::get_instance().play_touch_beep();
+        }
+        ImGui::PopStyleColor(3);
+    };
+
+    float btnW = std::max(140.0f, std::min(220.0f, (vpW - 320.0f) / 5.0f));
+
+    renderNavBtn(" TERMINAL VT ", CockpitScreen::TerminalVT, btnW);
+    ImGui::SameLine();
+    renderNavBtn(" TASK CONTROLLER & SOR ", CockpitScreen::TaskController, btnW);
+    ImGui::SameLine();
+    renderNavBtn(" CIAGNIK (TECU) ", CockpitScreen::TractorEcu, btnW);
+    ImGui::SameLine();
+    renderNavBtn(" JOYSTICK AUX-N ", CockpitScreen::AuxJoystick, btnW);
+    ImGui::SameLine();
+    renderNavBtn(" DIAGNOSTYKA CAN ", CockpitScreen::IsobusTools, btnW);
+
+    // Right Controls: Studio mode toggle and Fullscreen
+    ImGui::SameLine(vpW - 270.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.24f, 0.35f, 1.0f));
+    if (ImGui::Button(" Tryb Okienkowy (F9) ", ImVec2(130.0f, 40.0f)))
+    {
+        g_cockpitMode = false;
+        auto &mutCfg = isobus_vt::TerminalSettings::get_instance().get_config();
+        mutCfg.cockpitMode = false;
+        isobus_vt::TerminalSettings::get_instance().play_touch_beep();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(g_isFullscreen ? " Okno " : " Pelny Ekran (F10) ", ImVec2(110.0f, 40.0f)))
+    {
+        ToggleFullscreen(hwnd);
+        isobus_vt::TerminalSettings::get_instance().play_touch_beep();
+    }
+    ImGui::PopStyleColor();
+
+    ImGui::End();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+}
+
+static void RenderCockpitIsobusTools(
+    std::shared_ptr<isobus_vt::CanManager> canManager,
+    float vpW, float vpH)
+{
+    ImGui::SetNextWindowPos(ImVec2(6.0f, 48.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(vpW - 12.0f, vpH - 104.0f), ImGuiCond_Always);
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar |
+                             ImGuiWindowFlags_NoResize |
+                             ImGuiWindowFlags_NoMove |
+                             ImGuiWindowFlags_NoCollapse;
+
+    ImGui::Begin("Centrum Narzedzi ISOBUS###ToolsEmbedded", nullptr, flags);
+    if (ImGui::BeginTabBar("CockpitToolsTabs", ImGuiTabBarFlags_None))
+    {
+        if (ImGui::BeginTabItem(" Monitor Magistrali CAN "))
+        {
+            if (canManager)
+            {
+                bool isPaused = canManager->is_log_paused();
+                if (ImGui::Button(isPaused ? "Resume" : "Pause", ImVec2(100, 30)))
+                {
+                    canManager->set_log_paused(!isPaused);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Clear", ImVec2(80, 30)))
+                {
+                    canManager->clear_log();
+                }
+                ImGui::SameLine();
+                ImGui::Text("Total RX: %llu | Total TX: %llu | Bus Load: %.1f%%",
+                            canManager->get_rx_count(), canManager->get_tx_count(), canManager->get_bus_load());
+
+                auto loadHistory = canManager->get_bus_load_history();
+                if (!loadHistory.empty())
+                {
+                    ImGui::PlotLines("##BusLoadSparkline", loadHistory.data(), static_cast<int>(loadHistory.size()), 0, nullptr, 0.0f, 100.0f, ImVec2(0, 35));
+                }
+
+                auto frames = canManager->get_recent_frames(200);
+                if (ImGui::BeginTable("CanTableCockpit", 7, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, vpH - 240.0f)))
+                {
+                    ImGui::TableSetupColumn("Time (ms)", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+                    ImGui::TableSetupColumn("Dir", ImGuiTableColumnFlags_WidthFixed, 45.0f);
+                    ImGui::TableSetupColumn("PGN", ImGuiTableColumnFlags_WidthFixed, 75.0f);
+                    ImGui::TableSetupColumn("PGN Name", ImGuiTableColumnFlags_WidthFixed, 180.0f);
+                    ImGui::TableSetupColumn("Src", ImGuiTableColumnFlags_WidthFixed, 45.0f);
+                    ImGui::TableSetupColumn("Dst", ImGuiTableColumnFlags_WidthFixed, 45.0f);
+                    ImGui::TableSetupColumn("Data (HEX)");
+                    ImGui::TableHeadersRow();
+
+                    for (const auto &f : frames)
+                    {
+                        ImGui::TableNextRow();
+                        ImGui::TableNextColumn();
+                        ImGui::Text("%u", f.timestampMs % 100000);
+                        ImGui::TableNextColumn();
+                        if (f.isTx) ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "TX");
+                        else ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "RX");
+                        ImGui::TableNextColumn();
+                        ImGui::Text("0x%04X", f.pgn);
+                        ImGui::TableNextColumn();
+                        ImGui::Text("%s", f.pgnName.c_str());
+                        ImGui::TableNextColumn();
+                        ImGui::Text("0x%02X", f.source);
+                        ImGui::TableNextColumn();
+                        ImGui::Text("0x%02X", f.dest);
+                        ImGui::TableNextColumn();
+                        std::ostringstream ss;
+                        for (int d = 0; d < f.dlc; ++d)
+                        {
+                            ss << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << static_cast<int>(f.data[d]) << " ";
+                        }
+                        ImGui::Text("%s", ss.str().c_str());
+                    }
+                    ImGui::EndTable();
+                }
+            }
+            ImGui::EndTabItem();
+        }
+
+        if (ImGui::BeginTabItem(" Slownik DDI (ISO 11783-11) "))
+        {
+            isobus_vt::DdiExplorerManager::get_instance().render_ddi_explorer_window(nullptr);
+            ImGui::EndTabItem();
+        }
+
+        if (ImGui::BeginTabItem(" Inspektor Puli Obiektow "))
+        {
+            isobus_vt::ObjectPoolInspector::get_instance().render_inspector_window(nullptr);
+            ImGui::EndTabItem();
+        }
+
+        if (ImGui::BeginTabItem(" AEF Conformance Linter "))
+        {
+            isobus_vt::AefPoolLinter::get_instance().render_linter_window(nullptr);
+            ImGui::EndTabItem();
+        }
+
+        if (ImGui::BeginTabItem(" Serwer Plikow (ISO 11783-13) "))
+        {
+            isobus_vt::IsobusFileServer::get_instance().render_file_server_window(nullptr);
+            ImGui::EndTabItem();
+        }
+
+        if (ImGui::BeginTabItem(" Kody Bledow (DM1 / DM2) "))
+        {
+            if (canManager)
+            {
+                auto activeDtcs = canManager->get_active_dtcs();
+                auto prevDtcs = canManager->get_historical_dtcs();
+                if (ImGui::Button("Clear Fault List", ImVec2(140, 30)))
+                {
+                    canManager->clear_dtcs();
+                }
+                ImGui::SameLine();
+                ImGui::Text("Active Faults (DM1): %zu | Historic (DM2): %zu", activeDtcs.size(), prevDtcs.size());
+                ImGui::Separator();
+                if (activeDtcs.empty())
+                {
+                    ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.3f, 1.0f), "[ NO ACTIVE DIAGNOSTIC TROUBLE CODES - ALL SYSTEMS OK ]");
+                }
+                else
+                {
+                    if (ImGui::BeginTable("DtcTableCockpit", 6, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, vpH - 240.0f)))
+                    {
+                        ImGui::TableSetupColumn("ECU Source", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+                        ImGui::TableSetupColumn("SPN", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+                        ImGui::TableSetupColumn("FMI", ImGuiTableColumnFlags_WidthFixed, 50.0f);
+                        ImGui::TableSetupColumn("Description");
+                        ImGui::TableSetupColumn("Count", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+                        ImGui::TableSetupColumn("Lamp", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+                        ImGui::TableHeadersRow();
+
+                        for (const auto &dtc : activeDtcs)
+                        {
+                            ImGui::TableNextRow();
+                            ImGui::TableNextColumn();
+                            ImGui::Text("0x%02X", dtc.sourceAddress);
+                            ImGui::TableNextColumn();
+                            ImGui::Text("%u", dtc.spn);
+                            ImGui::TableNextColumn();
+                            ImGui::Text("%u", dtc.fmi);
+                            ImGui::TableNextColumn();
+                            ImGui::TextWrapped("%s", dtc.fmiDescription.c_str());
+                            ImGui::TableNextColumn();
+                            ImGui::Text("%u", dtc.occurrenceCount);
+                            ImGui::TableNextColumn();
+                            const char* lStr = dtc.redStopLamp ? "STOP" : (dtc.amberWarningLamp ? "WARN" : (dtc.milLamp ? "MIL" : "OK"));
+                            ImGui::Text("%s", lStr);
+                        }
+                        ImGui::EndTable();
+                    }
+                }
+            }
+            ImGui::EndTabItem();
+        }
+
+        ImGui::EndTabBar();
+    }
+    ImGui::End();
+}
+
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 {
     SetUnhandledExceptionFilter(CrashFilter);
@@ -587,6 +1169,24 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
             if (vtRenderer) vtRenderer->open_settings_dialog();
         }
 
+        // Handle F9 Cockpit Mode toggle
+        if (ImGui::IsKeyPressed(ImGuiKey_F9))
+        {
+            g_cockpitMode = !g_cockpitMode;
+            auto &mutCfg = isobus_vt::TerminalSettings::get_instance().get_config();
+            mutCfg.cockpitMode = g_cockpitMode;
+            isobus_vt::AudioBeeper::get_instance().play_touch_click();
+        }
+
+        // Handle Space hotkey for AEF ISB Emergency All-Stop
+        if (ImGui::IsKeyPressed(ImGuiKey_Space) && g_cockpitMode)
+        {
+            if (tcManager) tcManager->set_force_paint(false);
+            isobus_vt::TcBasReportManager::get_instance().pause_task();
+            g_isbAlertTimer = 5.0f;
+            isobus_vt::AudioBeeper::get_instance().play_alarm_tone();
+        }
+
         // Handle Audible Alarm Buzzer
         if (vtServer->is_alarm_active())
         {
@@ -610,39 +1210,50 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
                 g_TriggerResetLayout = true;
                 if (vtRenderer) vtRenderer->reset_layout();
 
+                g_cockpitMode = cfg.cockpitMode;
                 // Apply user-selected startup window
                 switch (cfg.startupWindow)
                 {
                     case 1: // Task Controller & ŚOR
                         showAogTcWindow = true;
                         tcActiveTabTarget = cfg.tcStartupTab;
+                        g_activeCockpitScreen = CockpitScreen::TaskController;
                         break;
                     case 2: // Tractor Telemetry TECU
                         showTractorWindow = true;
+                        g_activeCockpitScreen = CockpitScreen::TractorEcu;
                         break;
                     case 3: // CAN Bus Monitor
                         showCanLogWindow = true;
+                        g_activeCockpitScreen = CockpitScreen::IsobusTools;
                         break;
                     case 4: // AUX-N Control Center
                         showAuxWindow = true;
+                        g_activeCockpitScreen = CockpitScreen::AuxJoystick;
                         break;
                     case 5: // Multi-Working Set Mini-Views
                         showMiniViewsWindow = true;
+                        g_activeCockpitScreen = CockpitScreen::TerminalVT;
                         break;
                     case 6: // DDI Process Data Explorer
                         showDdiExplorerWindow = true;
+                        g_activeCockpitScreen = CockpitScreen::IsobusTools;
                         break;
                     case 7: // Live Object Pool Inspector
                         showPoolInspectorWindow = true;
+                        g_activeCockpitScreen = CockpitScreen::IsobusTools;
                         break;
                     case 8: // AEF Conformance Linter
                         showAefLinterWindow = true;
+                        g_activeCockpitScreen = CockpitScreen::IsobusTools;
                         break;
                     case 9: // ISOBUS File Server
                         showFileServerWindow = true;
+                        g_activeCockpitScreen = CockpitScreen::IsobusTools;
                         break;
-                    case 0: // Virtual Terminal Server (Default)
+                    case 0:
                     default:
+                        g_activeCockpitScreen = CockpitScreen::TerminalVT;
                         break;
                 }
             }
@@ -679,6 +1290,57 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
                 }
             }
 
+            bool isCockpit = g_cockpitMode && !g_isHudMode;
+
+            // Viewport layout calculation
+            float vpW = vp->Size.x;
+            float vpH = vp->Size.y;
+            float leftColW = (vpW > 1320.0f) ? 730.0f : (vpW * 0.52f);
+            float rightColX = leftColW + 16.0f;
+            float rightColW = std::max(400.0f, vpW - rightColX - 10.0f);
+
+            if (isCockpit)
+            {
+                // ── COCKPIT HARDWARE HEADER ──
+                RenderCockpitHeaderBar(hwnd, vtServer, canManager, tcManager, vtRenderer, vpW);
+
+                // ISB Emergency Banner
+                if (g_isbAlertTimer > 0.0f)
+                {
+                    g_isbAlertTimer -= ImGui::GetIO().DeltaTime;
+                    ImGui::SetNextWindowPos(ImVec2(10.0f, 48.0f), ImGuiCond_Always);
+                    ImGui::SetNextWindowSize(ImVec2(vpW - 20.0f, 32.0f), ImGuiCond_Always);
+                    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.55f, 0.08f, 0.08f, 0.95f));
+                    ImGui::Begin("##IsbAlertBanner", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings);
+                    ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.9f, 1.0f), " â  [AEF ISB STOP]: AWARYJNE ZATRZYMANIE MASZYN AKTYWNE! WYÅÄCZONO SEKCJE I ZADANIE TC ");
+                    ImGui::End();
+                    ImGui::PopStyleColor();
+                }
+
+                // ── COCKPIT PRIMARY VIEWPORT ──
+                if (g_activeCockpitScreen == CockpitScreen::TerminalVT)
+                {
+                    if (vpW >= 1150.0f)
+                    {
+                        float leftW = vpW - 370.0f;
+                        vtRenderer->render_terminal_window(true, ImVec2(4.0f, 48.0f), ImVec2(leftW, vpH - 104.0f));
+                        RenderCockpitSideStrip(vtServer, tcManager, canManager, vpW - 364.0f, 48.0f, 360.0f, vpH - 104.0f);
+                    }
+                    else
+                    {
+                        vtRenderer->render_terminal_window(true, ImVec2(4.0f, 48.0f), ImVec2(vpW - 8.0f, vpH - 104.0f));
+                    }
+                }
+                else if (g_activeCockpitScreen == CockpitScreen::IsobusTools)
+                {
+                    RenderCockpitIsobusTools(canManager, vpW, vpH);
+                }
+
+                // Render Bottom Navigation Dock Bar
+                RenderCockpitBottomDock(hwnd, vpW, vpH);
+            }
+            else
+            {
             // 1. Top Menu / Hardware Control Bar (Modern Console Header)
             ImGui::BeginMainMenuBar();
             {
@@ -1019,15 +1681,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
         }
         ImGui::EndMainMenuBar();
 
-        // Viewport layout calculation
-        float vpW = vp->Size.x;
-        float vpH = vp->Size.y;
-        float leftColW = (vpW > 1320.0f) ? 730.0f : (vpW * 0.52f);
-        float rightColX = leftColW + 16.0f;
-        float rightColW = std::max(400.0f, vpW - rightColX - 10.0f);
-
-        // 2. Main Terminal Viewport Window
-        vtRenderer->render_terminal_window();
+        // 2. Main Terminal Viewport Window (Studio Floating Mode)
+        vtRenderer->render_terminal_window(false);
+        } // End of: else (Studio Floating Mode)
 
         // 2b. Multi-Working Set Mini-Views Window (Podgląd Maszyn w Tle)
         if (showMiniViewsWindow && !g_isHudMode)
@@ -1036,9 +1692,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
         }
 
         // 3. AUX-N Control Center Window
-        if (showAuxWindow && !g_isHudMode)
+        bool renderAux = isCockpit ? (g_activeCockpitScreen == CockpitScreen::AuxJoystick) : (showAuxWindow && !g_isHudMode);
+        if (renderAux)
         {
-            if (g_TriggerResetLayout)
+            if (isCockpit)
+            {
+                ImGui::SetNextWindowPos(ImVec2(4.0f, 48.0f), ImGuiCond_Always);
+                ImGui::SetNextWindowSize(ImVec2(vpW - 8.0f, vpH - 104.0f), ImGuiCond_Always);
+            }
+            else if (g_TriggerResetLayout)
             {
                 ImGui::SetNextWindowPos(ImVec2(8.0f, 626.0f), ImGuiCond_Always);
                 ImGui::SetNextWindowSize(ImVec2(leftColW, std::max(280.0f, vpH - 636.0f)), ImGuiCond_Always);
@@ -1050,7 +1712,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
                 ImGui::SetNextWindowSize(ImVec2(leftColW, 320.0f), ImGuiCond_FirstUseEver);
                 ImGui::SetNextWindowCollapsed(false, ImGuiCond_Appearing);
             }
-            ImGui::Begin("AUX-N Control Center", &showAuxWindow, ImGuiWindowFlags_NoCollapse);
+            ImGuiWindowFlags auxFlags = isCockpit ? (ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse)
+                                                 : ImGuiWindowFlags_NoCollapse;
+            ImGui::Begin("AUX-N Control Center", isCockpit ? nullptr : &showAuxWindow, auxFlags);
             if (ImGui::BeginTabBar("AuxTabs"))
             {
                 // Tab 1: Assignments Management
@@ -1365,9 +2029,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
         }
 
         // 6. AgOpenGPS Task Controller (TC-BAS & TC-SC) | Ewidencja ŚOR 2027
-        if (showAogTcWindow && !g_isHudMode)
+        bool renderTc = isCockpit ? (g_activeCockpitScreen == CockpitScreen::TaskController) : (showAogTcWindow && !g_isHudMode);
+        if (renderTc)
         {
-            if (g_TriggerResetLayout)
+            if (isCockpit)
+            {
+                ImGui::SetNextWindowPos(ImVec2(4.0f, 48.0f), ImGuiCond_Always);
+                ImGui::SetNextWindowSize(ImVec2(vpW - 8.0f, vpH - 104.0f), ImGuiCond_Always);
+            }
+            else if (g_TriggerResetLayout)
             {
                 ImGui::SetNextWindowPos(ImVec2(rightColX, 36.0f), ImGuiCond_Always);
                 ImGui::SetNextWindowSize(ImVec2(std::max(rightColW, 520.0f), 560.0f), ImGuiCond_Always);
@@ -1380,7 +2050,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
                 ImGui::SetNextWindowCollapsed(false, ImGuiCond_Appearing);
             }
 
-            ImGui::Begin("Task Controller (TC-BAS & SC) | Ewidencja ŚOR 2027###AogTcWindow", &showAogTcWindow, ImGuiWindowFlags_NoCollapse);
+            ImGuiWindowFlags tcWinFlags = isCockpit ? (ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse)
+                                                   : ImGuiWindowFlags_NoCollapse;
+            ImGui::Begin("Task Controller (TC-BAS & SC) | Ewidencja ŚOR 2027###AogTcWindow", isCockpit ? nullptr : &showAogTcWindow, tcWinFlags);
 
             auto &tcBas = isobus_vt::TcBasReportManager::get_instance();
             auto &curTask = tcBas.get_current_task();
@@ -2394,9 +3066,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
         }
 
         // Tractor Telemetry & J1939 Dashboard
-        if (showTractorWindow && !g_isHudMode)
+        bool renderTractor = isCockpit ? (g_activeCockpitScreen == CockpitScreen::TractorEcu) : (showTractorWindow && !g_isHudMode);
+        if (renderTractor)
         {
-            isobus_vt::TractorEcuManager::get_instance().render_tractor_dashboard(&showTractorWindow);
+            if (isCockpit)
+            {
+                ImGui::SetNextWindowPos(ImVec2(4.0f, 48.0f), ImGuiCond_Always);
+                ImGui::SetNextWindowSize(ImVec2(vpW - 8.0f, vpH - 104.0f), ImGuiCond_Always);
+            }
+            isobus_vt::TractorEcuManager::get_instance().render_tractor_dashboard(isCockpit ? nullptr : &showTractorWindow);
         }
 
         if (showTractorPgnConfig && !g_isHudMode)
