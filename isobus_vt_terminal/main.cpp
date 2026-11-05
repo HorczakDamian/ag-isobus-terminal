@@ -433,7 +433,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
     isobus_vt::AefPoolLinter::get_instance().set_vt_server(vtServer);
 
     auto auxManager = std::make_shared<isobus_vt::AuxManager>(vtServerCF);
-    auxManager->initialize();
+    auxManager->set_enabled(cfg.auxEnabled);
+    if (cfg.auxEnabled)
+    {
+        auxManager->initialize();
+    }
 
     // Initialize CAN Driver from saved configuration (PEAK PCAN or Virtual)
     int selectedDriverIndex = cfg.canDriver;
@@ -443,25 +447,36 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
     canManager->initialize(driverType, selectedPcanChannel);
 
     auto tcManager = std::make_shared<isobus_vt::TaskControllerManager>();
-    tcManager->initialize(0);
+    if (cfg.tcEnabled)
+    {
+        tcManager->initialize(0);
+    }
 
     auto vtRenderer = std::make_shared<isobus_vt::VTRenderer>(vtServer);
     vtRenderer->set_managers(canManager, tcManager);
 
+    // Subsystems enable states
+    isobus_vt::IsobusFileServer::get_instance().set_enabled(cfg.fileServerEnabled);
+    isobus_vt::DdiExplorerManager::get_instance().set_enabled(cfg.ddiExplorerEnabled);
+    isobus_vt::TractorEcuManager::get_instance().set_enabled(cfg.tecuEnabled);
+    if (cfg.tecuEnabled)
+    {
+        isobus_vt::TractorEcuManager::get_instance().start();
+    }
+
     // UI state variables initialized from persistent configuration
-    bool showAuxWindow = cfg.showAuxWindow;
+    bool showAuxWindow = cfg.showAuxWindow && cfg.auxEnabled;
     bool showCanLogWindow = cfg.showCanLogWindow;
     bool showWsInspector = cfg.showWsInspector;
     bool showAogTcWindow = cfg.showAogTcWindow;
     bool showDiagnosticsWindow = cfg.showDiagnosticsWindow;
-    bool showMiniViewsWindow = cfg.showMiniViewsWindow;
-    bool showTractorWindow = true;
+    bool showMiniViewsWindow = cfg.showMiniViewsWindow && cfg.miniViewsEnabled;
+    bool showTractorWindow = cfg.tecuEnabled;
     bool showTractorPgnConfig = false;
     bool showFileServerWindow = false;
     bool showDdiExplorerWindow = false;
     bool showPoolInspectorWindow = false;
     bool showAefLinterWindow = false;
-    isobus_vt::TractorEcuManager::get_instance().start();
     static bool g_TriggerResetLayout = false;
     bool alarmSoundMuted = cfg.alarmSoundMuted;
     float uiTouchScale = cfg.uiTouchScale;
@@ -503,10 +518,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 
         // Periodic updates for ISOBUS stack, AUX and Task Controller
         vtServer->run_update();
-        auxManager->update();
-        tcManager->update();
-        isobus_vt::IsobusFileServer::get_instance().update();
-        isobus_vt::TractorEcuManager::get_instance().update();
+        if (cfg.auxEnabled && auxManager)
+            auxManager->update();
+        if (cfg.tcEnabled && tcManager && tcManager->is_initialized())
+            tcManager->update();
+        if (cfg.fileServerEnabled)
+            isobus_vt::IsobusFileServer::get_instance().update();
+        if (cfg.tecuEnabled)
+            isobus_vt::TractorEcuManager::get_instance().update();
 
         // Auto-select active working set if none is active and an object pool is ready
         if (!vtServer->get_active_ws())
@@ -582,13 +601,70 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
         }
         else
         {
-            // First frame after splash screen: trigger clean responsive layout
+            // First frame after splash screen: trigger clean responsive layout & startup window selection
             static bool initialLayoutApplied = false;
+            static int tcActiveTabTarget = cfg.tcStartupTab;
             if (!initialLayoutApplied)
             {
                 initialLayoutApplied = true;
                 g_TriggerResetLayout = true;
                 if (vtRenderer) vtRenderer->reset_layout();
+
+                // Apply user-selected startup window
+                switch (cfg.startupWindow)
+                {
+                    case 1: // Task Controller & ŚOR
+                        showAogTcWindow = true;
+                        tcActiveTabTarget = cfg.tcStartupTab;
+                        break;
+                    case 2: // Tractor Telemetry TECU
+                        showTractorWindow = true;
+                        break;
+                    case 3: // CAN Bus Monitor
+                        showCanLogWindow = true;
+                        break;
+                    case 4: // AUX-N Control Center
+                        showAuxWindow = true;
+                        break;
+                    case 5: // Multi-Working Set Mini-Views
+                        showMiniViewsWindow = true;
+                        break;
+                    case 6: // DDI Process Data Explorer
+                        showDdiExplorerWindow = true;
+                        break;
+                    case 7: // Live Object Pool Inspector
+                        showPoolInspectorWindow = true;
+                        break;
+                    case 8: // AEF Conformance Linter
+                        showAefLinterWindow = true;
+                        break;
+                    case 9: // ISOBUS File Server
+                        showFileServerWindow = true;
+                        break;
+                    case 0: // Virtual Terminal Server (Default)
+                    default:
+                        break;
+                }
+            }
+
+            // Bring selected startup window into foreground focus on first frame
+            static bool startupFocusApplied = false;
+            if (!startupFocusApplied)
+            {
+                startupFocusApplied = true;
+                switch (cfg.startupWindow)
+                {
+                    case 1: ImGui::SetWindowFocus("Task Controller (TC-BAS & SC) | Ewidencja ŚOR 2027###AogTcWindow"); break;
+                    case 2: ImGui::SetWindowFocus("Telemetria Ciągnika (TECU / J1939)###TractorDashboard"); break;
+                    case 3: ImGui::SetWindowFocus("CAN Bus Monitor & Diagnostics"); break;
+                    case 4: ImGui::SetWindowFocus("AUX-N Control Center"); break;
+                    case 5: ImGui::SetWindowFocus("Podglad Maszyn w Tle (Mini-Views)###MiniViews"); break;
+                    case 6: ImGui::SetWindowFocus("DDI Process Data Explorer (ISO 11783-11)###DdiExplorer"); break;
+                    case 7: ImGui::SetWindowFocus("Live Object Pool Tree Browser & Inspector###PoolInspector"); break;
+                    case 8: ImGui::SetWindowFocus("AEF Object Pool Linter & Conformance Checker###AefLinter"); break;
+                    case 9: ImGui::SetWindowFocus("ISOBUS File Server (ISO 11783-13)###FileServer"); break;
+                    default: break;
+                }
             }
 
             // Draw precision ag cockpit canvas background
@@ -802,6 +878,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
             }
 
             // Compact AOG TC Status badge
+            if (!cfg.tcEnabled)
+            {
+                ImGui::TextColored(ImVec4(0.50f, 0.55f, 0.60f, 1.0f), "[ TC: Wylaczony ]");
+                if (ImGui::IsItemHovered())
+                {
+                    ImGui::BeginTooltip();
+                    ImGui::TextUnformatted("Task Controller jest wylaczony w konfiguracji.");
+                    ImGui::TextDisabled("Przejdz do: Konfiguracja (F2) -> Moduly & Autostart aby wlaczyc.");
+                    ImGui::EndTooltip();
+                }
+            }
+            else
+            {
             bool aogActive = tcManager->is_aog_connected();
             if (aogActive)
             {
@@ -822,8 +911,22 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
                 ImGui::Text("Speed: %.1f km/h", tcManager->get_speed_kph());
                 ImGui::EndTooltip();
             }
+            }
 
             // Tractor TECU Status badge
+            if (!cfg.tecuEnabled)
+            {
+                ImGui::TextColored(ImVec4(0.50f, 0.55f, 0.60f, 1.0f), "[ TECU: Wylaczony ]");
+                if (ImGui::IsItemHovered())
+                {
+                    ImGui::BeginTooltip();
+                    ImGui::TextUnformatted("Telemetria ciagnika (TECU) jest wylaczona w konfiguracji.");
+                    ImGui::TextDisabled("Przejdz do: Konfiguracja (F2) -> Moduly & Autostart aby wlaczyc.");
+                    ImGui::EndTooltip();
+                }
+            }
+            else
+            {
             bool tecuConnected = isobus_vt::TractorEcuManager::get_instance().is_connected();
             auto tecuTel = isobus_vt::TractorEcuManager::get_instance().get_telemetry();
             bool tecuLive = tecuConnected && (tecuTel.totalFramesReceived > 0);
@@ -846,6 +949,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
                 ImGui::Text("Silnik: %.0f RPM | Spalanie: %.1f l/h", tecuTel.engineRpm, tecuTel.fuelRateLitersPerHour);
                 ImGui::Text("Szyna: %s", isobus_vt::TractorEcuManager::get_instance().get_status_string().c_str());
                 ImGui::EndTooltip();
+            }
             }
 
             // VT Version badge
@@ -1381,11 +1485,33 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 
             ImGui::Separator();
 
-            static int activeTabTarget = -1;
+            if (!cfg.tcEnabled)
+            {
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.20f, 0.12f, 0.08f, 0.70f));
+                ImGui::BeginChild("TcDisabledBanner", ImVec2(0, 68), true);
+                ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f), "Modul Task Controller (TC-BAS & TC-SC) jest obecnie WYLACZONY w konfiguracji.");
+                ImGui::TextDisabled("Aplikacja nie zajmuje adresu ISOBUS na magistrali CAN ani nie odbiera telemetrii AgOpenGPS (port 8888).");
+                if (ImGui::Button(" Wlacz Task Controller teraz "))
+                {
+                    auto &mutCfg = isobus_vt::TerminalSettings::get_instance().get_config();
+                    mutCfg.tcEnabled = true;
+                    if (tcManager && !tcManager->is_initialized())
+                    {
+                        tcManager->initialize(0);
+                    }
+                    isobus_vt::TerminalSettings::get_instance().save();
+                    isobus_vt::TerminalSettings::get_instance().play_touch_beep();
+                }
+                ImGui::EndChild();
+                ImGui::PopStyleColor();
+                ImGui::Spacing();
+            }
+
             if (ImGui::BeginTabBar("TcBasTabs", ImGuiTabBarFlags_None))
             {
                 // ── TAB 1: TC-BAS & ISO-XML (TASKDATA) ─────────────────────────
-                if (ImGui::BeginTabItem("TC-BAS & ISO-XML"))
+                ImGuiTabItemFlags tFlags0 = (tcActiveTabTarget == 0) ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
+                if (ImGui::BeginTabItem("TC-BAS & ISO-XML", nullptr, tFlags0))
                 {
                     ImGui::TextColored(ImVec4(0.3f, 0.85f, 1.0f, 1.0f), "ISO 11783-10 Task Controller Basic (TC-BAS) - Rejestracja Pracy Polowej");
                     ImGui::Separator();
@@ -1546,7 +1672,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
                 }
 
                 // ── TAB 2: EWIDENCJA ŚOR 2027 ──────────────────────────────────
-                if (ImGui::BeginTabItem("Ewidencja ŚOR 2027"))
+                ImGuiTabItemFlags tFlags1 = (tcActiveTabTarget == 1) ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
+                if (ImGui::BeginTabItem("Ewidencja ÅOR 2027", nullptr, tFlags1))
                 {
                     auto &sor = curTask.sorData;
 
@@ -1720,7 +1847,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
                 }
 
                 // ── TAB 3: KATALOG ŚRODKÓW MRiRW (2953 PREPARATY) ──────────────
-                if (ImGui::BeginTabItem("Katalog Środków MRiRW"))
+                ImGuiTabItemFlags tFlags2 = (tcActiveTabTarget == 2) ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
+                if (ImGui::BeginTabItem("Katalog ÅrodkÃ³w MRiRW", nullptr, tFlags2))
                 {
                     ImGui::TextColored(ImVec4(0.35f, 0.85f, 1.0f, 1.0f), "Oficjalna Baza Środków Ochrony Roślin MRiRW (2953 preparaty)");
                     ImGui::TextDisabled("Wyszukaj środek i kliknij 'Wybierz do zabiegu', aby automatycznie przenieść dane do ewidencji.");
@@ -1807,7 +1935,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
                 }
 
                 // ── TAB 4: PROFIL GOSPODARSTWA I ATESTY ────────────────────────
-                if (ImGui::BeginTabItem("Profil Gospodarstwa i Atesty"))
+                ImGuiTabItemFlags tFlags3 = (tcActiveTabTarget == 3) ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
+                if (ImGui::BeginTabItem("Profil Gospodarstwa i Atesty", nullptr, tFlags3))
                 {
                     ImGui::TextColored(ImVec4(0.4f, 0.85f, 1.0f, 1.0f), "Trwały Profil Gospodarstwa, Sprzętu (Atesty) i Uprawnień ŚOR");
                     ImGui::TextDisabled("Dane zapisywane w pliku profil_gospodarstwa.json - uzupełniają się automatycznie przy każdym zabiegu.");
@@ -1993,7 +2122,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
                 }
 
                 // ── TAB 5: SEKCJE I TC-SC (DOTYCHCZASOWY WIDOK) ────────────────
-                if (ImGui::BeginTabItem("Sekcje i GPS (TC-SC)"))
+                ImGuiTabItemFlags tFlags4 = (tcActiveTabTarget == 4) ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
+                if (ImGui::BeginTabItem("Sekcje i GPS (TC-SC)", nullptr, tFlags4))
                 {
                     ImGui::Columns(3, "AogInfoCols", false);
                     ImGui::Text("Tryb TC: %s", tcManager->is_auto_mode() ? "AUTOMATYCZNY" : "MANUALNY");
@@ -2044,7 +2174,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
                 }
 
                 // ── TAB 6: HISTORIA ZABIEGÓW ───────────────────────────────────
-                if (ImGui::BeginTabItem("Historia Zadań"))
+                ImGuiTabItemFlags tFlags5 = (tcActiveTabTarget == 5) ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
+                if (ImGui::BeginTabItem("Historia ZadaÅ", nullptr, tFlags5))
                 {
                     const auto &hist = tcBas.get_task_history();
                     ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Archiwum Zakończonych Zadań i Zabiegów (%zu wpisów):", hist.size());
@@ -2107,6 +2238,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
                 }
 
                 ImGui::EndTabBar();
+                tcActiveTabTarget = -1;
             }
 
             ImGui::End();

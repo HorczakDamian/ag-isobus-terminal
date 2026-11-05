@@ -131,7 +131,15 @@ namespace isobus_vt
                 else if (key == "touch_scale") config.uiTouchScale = std::max(0.7f, std::min(2.0f, std::stof(val)));
 
                 // [TaskController]
+                // [TaskController & Modules]
                 else if (key == "tc_enabled") config.tcEnabled = (std::stoi(val) != 0);
+                else if (key == "tecu_enabled") config.tecuEnabled = (std::stoi(val) != 0);
+                else if (key == "file_server_enabled") config.fileServerEnabled = (std::stoi(val) != 0);
+                else if (key == "aux_enabled") config.auxEnabled = (std::stoi(val) != 0);
+                else if (key == "ddi_explorer_enabled") config.ddiExplorerEnabled = (std::stoi(val) != 0);
+                else if (key == "mini_views_enabled") config.miniViewsEnabled = (std::stoi(val) != 0);
+                else if (key == "startup_window") config.startupWindow = std::max(0, std::min(9, std::stoi(val)));
+                else if (key == "tc_startup_tab") config.tcStartupTab = std::max(0, std::min(5, std::stoi(val)));
                 else if (key == "aog_rx_port") config.aogRxPort = std::stoi(val);
                 else if (key == "aog_tx_port") config.aogTxPort = std::stoi(val);
                 else if (key == "aog_subnet") config.aogSubnet = val;
@@ -209,6 +217,18 @@ namespace isobus_vt
             out << "touch_beep=" << (config.touchBeepEnabled ? 1 : 0) << "\n";
             out << "day_mode=" << (config.isDayMode ? 1 : 0) << "\n";
             out << "touch_scale=" << config.uiTouchScale << "\n\n";
+
+            out << "[Startup]\n";
+            out << "startup_window=" << config.startupWindow << "\n";
+            out << "tc_startup_tab=" << config.tcStartupTab << "\n\n";
+
+            out << "[Modules]\n";
+            out << "tc_enabled=" << (config.tcEnabled ? 1 : 0) << "\n";
+            out << "tecu_enabled=" << (config.tecuEnabled ? 1 : 0) << "\n";
+            out << "file_server_enabled=" << (config.fileServerEnabled ? 1 : 0) << "\n";
+            out << "aux_enabled=" << (config.auxEnabled ? 1 : 0) << "\n";
+            out << "ddi_explorer_enabled=" << (config.ddiExplorerEnabled ? 1 : 0) << "\n";
+            out << "mini_views_enabled=" << (config.miniViewsEnabled ? 1 : 0) << "\n\n";
 
             out << "[TaskController]\n";
             out << "tc_enabled=" << (config.tcEnabled ? 1 : 0) << "\n";

@@ -16,6 +16,9 @@
 #include "AudioBeeper.hpp"
 #include "CanManager.hpp"
 #include "TaskControllerManager.hpp"
+#include "TractorEcuManager.hpp"
+#include "IsobusFileServer.hpp"
+#include "DdiExplorerManager.hpp" 
 #include "isobus/isobus/isobus_virtual_terminal_objects.hpp"
 #include "isobus/isobus/can_network_manager.hpp"
 
@@ -2623,6 +2626,133 @@ namespace isobus_vt
                                 ts.play_touch_beep();
                             }
                         }
+
+                        ImGui::EndTabItem();
+                    }
+
+                    // ── Tab: 🚀 Moduły & Autostart ──
+                    if (ImGui::BeginTabItem(" 🚀 Moduly & Autostart "))
+                    {
+                        ImGui::Spacing();
+                        ImGui::TextColored(ImVec4(0.4f, 0.85f, 1.0f, 1.0f), "Wybor aktywnego okna / zakladki po uruchomieniu terminala:");
+                        ImGui::Separator();
+
+                        const char* startupWindowOptions[] = {
+                            "0: Wirtualny Terminal VT (ISO 11783-6) [Domyslny]",
+                            "1: Task Controller & Ewidencja SOR (TC-BAS & TC-SC)",
+                            "2: Telemetria Ciagnika (TECU / J1939 - TUZ, WOM, Silnik)",
+                            "3: Monitor Magistrali CAN & Diagnostyka",
+                            "4: AUX-N Control Center (Mapowanie Joysticka)",
+                            "5: Podglad Maszyn w Tle (Multi-Working Set Mini-Views)",
+                            "6: DDI Process Data Explorer (ISO 11783-11)",
+                            "7: Live Object Pool Tree Browser & Inspector",
+                            "8: AEF Object Pool Linter & Conformance Checker",
+                            "9: ISOBUS File Server (ISO 11783-13)"
+                        };
+
+                        ImGui::SetNextItemWidth(450.0f);
+                        ImGui::Combo("Glowne okno po starcie aplikacji", &cfg.startupWindow, startupWindowOptions, 10);
+                        ImGui::TextDisabled("Wskazowka: Wybrane okno zostanie natychmiast otwarte i wysuniete na wierzch po zaladowaniu systemu.");
+
+                        if (cfg.startupWindow == 1)
+                        {
+                            ImGui::Spacing();
+                            ImGui::TextColored(ImVec4(0.35f, 0.9f, 0.6f, 1.0f), "Domyslna zakladka w oknie Task Controllera:");
+                            const char* tcTabOptions[] = {
+                                "0: TC-BAS & ISO-XML (Zabieg i liczniki pracy)",
+                                "1: Ewidencja SOR 2027 (Karta zabiegu / Rejestr)",
+                                "2: Katalog Srodkow MRiRW (Baza pestycydow)",
+                                "3: Profil Gospodarstwa i Atesty (Dzialki, opryskiwacz)",
+                                "4: Sekcje i GPS (TC-SC / Rozsiewacz)",
+                                "5: Historia Zadan & Eksport"
+                            };
+                            ImGui::SetNextItemWidth(450.0f);
+                            ImGui::Combo("Aktywna zakladka TC", &cfg.tcStartupTab, tcTabOptions, 6);
+                        }
+
+                        ImGui::Spacing();
+                        ImGui::Separator();
+                        ImGui::Spacing();
+
+                        ImGui::TextColored(ImVec4(0.4f, 0.85f, 1.0f, 1.0f), "Wlaczanie / Wylaczanie poszczegolnych modulow i podsystemow:");
+                        ImGui::TextDisabled("Wylaczenie nieuzywanych modulow oszczedza zasoby procesora, pamiec RAM oraz pasmo magistrali CAN.");
+                        ImGui::Spacing();
+
+                        // 1. Task Controller
+                        if (ImGui::Checkbox("Wlacz Task Controller (TC-BAS & TC-SC / AgOpenGPS Bridge)", &cfg.tcEnabled))
+                        {
+                            if (tcManager)
+                            {
+                                if (cfg.tcEnabled && !tcManager->is_initialized())
+                                {
+                                    tcManager->initialize(0);
+                                }
+                                else if (!cfg.tcEnabled && tcManager->is_initialized())
+                                {
+                                    tcManager->shutdown();
+                                }
+                            }
+                        }
+                        ImGui::Indent();
+                        ImGui::TextDisabled("Serwer TC na magistrali CAN (PGN 0xCB00/0xCA00), adres 0xF7/0xF0, porty UDP 8888/9999.");
+                        if (!cfg.tcEnabled)
+                            ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.2f, 1.0f), "  [Status: Wylaczony - TC nie zajmuje adresu ani portow UDP]");
+                        ImGui::Unindent();
+                        ImGui::Spacing();
+
+                        // 2. Telemetria Ciagnika
+                        if (ImGui::Checkbox("Wlacz Telemetrie Ciagnika (TECU / J1939 - TUZ, WOM, Silnik)", &cfg.tecuEnabled))
+                        {
+                            auto &tecu = TractorEcuManager::get_instance();
+                            tecu.set_enabled(cfg.tecuEnabled);
+                            if (cfg.tecuEnabled) tecu.start();
+                            else tecu.stop();
+                        }
+                        ImGui::Indent();
+                        ImGui::TextDisabled("Odczyt parametrow z 2. PCAN lub wspoldzielonego CAN 1 (obroty, predkosc, WOM, pozycja TUZ).");
+                        if (!cfg.tecuEnabled)
+                            ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.2f, 1.0f), "  [Status: Wylaczona - podsystem TECU nie nasluchuje CAN]");
+                        ImGui::Unindent();
+                        ImGui::Spacing();
+
+                        // 3. ISOBUS File Server
+                        if (ImGui::Checkbox("Wlacz ISOBUS File Server (ISO 11783-13)", &cfg.fileServerEnabled))
+                        {
+                            IsobusFileServer::get_instance().set_enabled(cfg.fileServerEnabled);
+                        }
+                        ImGui::Indent();
+                        ImGui::TextDisabled("Serwer plikow dla implementow ISOBUS (PGN 45312 / 45056) na katalog 'isobus_file_server/'.");
+                        if (!cfg.fileServerEnabled)
+                            ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.2f, 1.0f), "  [Status: Wylaczony - brak transmisji plikow po magistrali]");
+                        ImGui::Unindent();
+                        ImGui::Spacing();
+
+                        // 4. AUX-N Joystick
+                        ImGui::Checkbox("Wlacz Obsluge Joysticka AUX-N (ISO 11783-6)", &cfg.auxEnabled);
+                        ImGui::Indent();
+                        ImGui::TextDisabled("Mapowanie fizycznych i wirtualnych joystickow na funkcje pomocnicze podlaczonych maszyn.");
+                        if (!cfg.auxEnabled)
+                            ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.2f, 1.0f), "  [Status: Wylaczony - nie rozglasza komunikatow AUX]");
+                        ImGui::Unindent();
+                        ImGui::Spacing();
+
+                        // 5. DDI Explorer
+                        if (ImGui::Checkbox("Wlacz DDI Process Data Explorer (ISO 11783-11)", &cfg.ddiExplorerEnabled))
+                        {
+                            DdiExplorerManager::get_instance().set_enabled(cfg.ddiExplorerEnabled);
+                        }
+                        ImGui::Indent();
+                        ImGui::TextDisabled("Przechwytywanie i rejestrowanie slownika zmiennych procesu polowego na zywo.");
+                        if (!cfg.ddiExplorerEnabled)
+                            ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.2f, 1.0f), "  [Status: Wylaczony - brak alokacji buforow telemetrycznych]");
+                        ImGui::Unindent();
+                        ImGui::Spacing();
+
+                        // 6. Podglad maszyn w tle
+                        ImGui::Checkbox("Wlacz Podglad Maszyn w Tle (Multi-Working Set Mini-Views)", &cfg.miniViewsEnabled);
+                        ImGui::Indent();
+                        ImGui::TextDisabled("Rownolegle kafelki podgladu dla wielu podlaczonych implementow ISOBUS.");
+                        ImGui::Unindent();
 
                         ImGui::EndTabItem();
                     }

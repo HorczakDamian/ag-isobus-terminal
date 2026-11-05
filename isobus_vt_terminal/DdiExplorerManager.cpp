@@ -123,6 +123,7 @@ namespace isobus_vt
 
     void DdiExplorerManager::record_process_data_from_can(std::uint32_t pgn, std::uint8_t sa, const std::uint8_t *data, std::uint32_t len)
     {
+        if (!explorerEnabled) return;
         // ISO 11783-10 Process Data PGN 65098 (0xFE4A) or TC PGN (0xCB00)
         if (pgn != 0xCB00 && pgn != 0xFE4A) return;
         if (!data || len < 6) return;
@@ -175,6 +176,8 @@ namespace isobus_vt
 
         // Header and quick stats
         ImGui::TextColored(ImVec4(0.35f, 0.85f, 1.0f, 1.0f), "ISOBUS Data Dictionary (ISO 11783-11) & Process Data Monitor");
+        ImGui::SameLine();
+        ImGui::Checkbox("Włączony", &explorerEnabled);
         ImGui::SameLine(ImGui::GetWindowWidth() - 220.0f);
         if (ImGui::Button("🧪 Wstrzyknij dane testowe"))
         {

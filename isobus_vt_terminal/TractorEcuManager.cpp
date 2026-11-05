@@ -215,6 +215,12 @@ namespace isobus_vt
     bool TractorEcuManager::start()
     {
         std::lock_guard<std::mutex> lock(dataMutex);
+        if (!enabled)
+        {
+            isConnected = false;
+            statusText = "Wylaczony w konfiguracji";
+            return false;
+        }
         if (currentSource == TractorCanSource::SecondPcanUsb)
         {
             CAN_Uninitialize(pcanChannel);
@@ -426,6 +432,7 @@ namespace isobus_vt
 
     void TractorEcuManager::update()
     {
+        if (!enabled) return;
         if (currentSource == TractorCanSource::SecondPcanUsb && isConnected)
         {
             TPCANMsg msg;
@@ -455,6 +462,7 @@ namespace isobus_vt
 
     void TractorEcuManager::process_can_frame(std::uint32_t id, const std::uint8_t *data, std::uint8_t len)
     {
+        if (!enabled) return;
         std::lock_guard<std::mutex> lock(dataMutex);
 
         std::uint32_t pgn = (id >> 8) & 0x03FFFF;

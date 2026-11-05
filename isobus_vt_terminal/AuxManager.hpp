@@ -58,6 +58,9 @@ namespace isobus_vt
         void initialize();
         void update();
 
+        bool is_enabled() const { return enabled; }
+        void set_enabled(bool en) { enabled = en; }
+
         // CAN frame / message processing
         void process_can_message(const isobus::CANMessage &message);
 
@@ -97,6 +100,7 @@ namespace isobus_vt
         std::map<std::uint64_t, DiscoveredAuxInputDevice> inputDevices;
         std::vector<AuxAssignment> assignments;
 
+        bool enabled = true;
         bool virtualJoystickEnabled = true;
         std::uint32_t lastVirtualMaintTimestamp = 0;
 

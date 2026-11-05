@@ -47,6 +47,8 @@ isobus_sdk/
 Raporty_SOR/
 TASKDATA/
 aux_inputs/
+isobus_file_server/
+*.html
 
 # Whitelist AgOpenGPS & AOG-TaskController suites
 !agopen/

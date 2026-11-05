@@ -53,6 +53,7 @@ namespace isobus_vt
 
     void AuxManager::update()
     {
+        if (!enabled) return;
         if (virtualJoystickEnabled && virtualJoystickCF && virtualJoystickCF->get_address_valid())
         {
             if (isobus::SystemTiming::time_expired_ms(lastVirtualMaintTimestamp, 1000))

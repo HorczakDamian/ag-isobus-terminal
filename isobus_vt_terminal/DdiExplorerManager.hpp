@@ -42,6 +42,9 @@ namespace isobus_vt
     public:
         static DdiExplorerManager& get_instance();
 
+        bool is_enabled() const { return explorerEnabled; }
+        void set_enabled(bool enabled) { explorerEnabled = enabled; }
+
         void update_ddi_value(std::uint16_t ddi, std::int32_t rawValue, std::uint8_t sa = 0, std::uint16_t element = 0);
         void record_process_data_from_can(std::uint32_t pgn, std::uint8_t sa, const std::uint8_t *data, std::uint32_t len);
 
@@ -62,6 +65,7 @@ namespace isobus_vt
         std::map<std::uint16_t, DdiLiveRecord> liveRecords;
 
         // UI state
+        bool explorerEnabled = true;
         char searchFilter[64] = { 0 };
         int selectedCategoryIdx = 0;
         std::uint16_t selectedDdiForGraph = 0;

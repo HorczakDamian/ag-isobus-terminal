@@ -127,6 +127,9 @@ namespace isobus_vt
         void set_d3d_device(ID3D11Device* device);
 
         // Cykl życia i komunikacja CAN
+        bool is_enabled() const { return enabled; }
+        void set_enabled(bool en) { enabled = en; }
+
         bool start();
         void stop();
         void update();
@@ -212,6 +215,7 @@ namespace isobus_vt
         std::vector<PgnFieldConfig> fieldConfigs;
         float hitchLoweredThresholdPct = 25.0f; // Poniżej 25% podnośnika = stan roboczy (ziemia)
         bool autoWorkTriggerEnabled = true;
+        bool enabled = true;
 
         TractorLiveTelemetry telemetry;
         std::map<std::uint32_t, SniffedCanFrame> sniffedFrames;

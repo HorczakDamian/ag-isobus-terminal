@@ -220,6 +220,7 @@ namespace isobus_vt
         bool initialize(std::uint8_t canChannelIndex = 0);
         void update();
         void shutdown();
+        bool is_initialized() const { return tcServer != nullptr; }
 
         // Component references
         std::shared_ptr<TerminalTCServer> get_tc_server() const { return tcServer; }

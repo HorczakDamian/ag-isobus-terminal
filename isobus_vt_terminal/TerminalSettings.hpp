@@ -43,7 +43,17 @@ namespace isobus_vt
         float uiTouchScale = 1.0f;          // Scale of UI elements for touchscreens
 
         // ── AgOpenGPS Task Controller (TC) ──
-        bool tcEnabled = true;              // Task Controller enabled
+        // ── Autostart & Active Startup Window ──
+        int startupWindow = 0;              // 0 = Virtual Terminal, 1 = Task Controller & ŚOR, 2 = Telemetria Ciągnika (TECU), 3 = Monitor CAN, 4 = AUX-N, 5 = Mini-Views, 6 = DDI Explorer, 7 = Inspektor Puli, 8 = AEF Linter, 9 = File Server
+        int tcStartupTab = 0;               // 0 = TC-BAS & ISO-XML, 1 = Ewidencja ŚOR, 2 = Katalog MRiRW, 3 = Profil & Atesty, 4 = Sekcje TC-SC, 5 = Historia
+
+        // ── Subsystem Module Toggles (Włączanie / Wyłączanie funkcji) ──
+        bool tcEnabled = true;              // Task Controller (TC-BAS & TC-SC / AOG Bridge)
+        bool tecuEnabled = true;            // Tractor ECU telemetry (TUZ, WOM, J1939 na 2. PCAN / CAN 1)
+        bool fileServerEnabled = true;      // ISOBUS File Server (ISO 11783-13)
+        bool auxEnabled = true;             // AUX-N Joystick & Inputs (ISO 11783-6)
+        bool ddiExplorerEnabled = true;     // DDI Process Data Explorer (ISO 11783-11)
+        bool miniViewsEnabled = true;       // Multi-Working Set Mini-Views (Podgląd w tle)
         int aogRxPort = 8888;               // UDP Port listening from AgOpenGPS/AGIO
         int aogTxPort = 9999;               // UDP Port broadcasting to AgOpenGPS
         std::string aogSubnet = "192.168.5";// Subnet for UDP broadcast
