@@ -189,13 +189,21 @@ namespace isobus_vt
         std::lock_guard<std::recursive_mutex> lock(serverMutex);
         poolStorage.clear();
 
-        std::error_code ec;
-        if (!std::filesystem::exists("object_pool_cache", ec))
-            return;
+        std::vector<std::string> searchDirs = {
+            "object_pool_cache",
+            "build_vt/Release/object_pool_cache",
+            "../object_pool_cache"
+        };
 
+        std::error_code ec;
         std::size_t loadedCount = 0;
-        for (const auto &entry : std::filesystem::directory_iterator("object_pool_cache", ec))
+
+        for (const auto &cacheDir : searchDirs)
         {
+            if (!std::filesystem::exists(cacheDir, ec)) continue;
+
+            for (const auto &entry : std::filesystem::directory_iterator(cacheDir, ec))
+            {
             if (entry.is_regular_file(ec) && entry.path().extension() == ".iop")
             {
                 std::string stem = entry.path().stem().string(); // e.g. "A000810000007777_v1.0" or "A000810000007777"
@@ -226,6 +234,7 @@ namespace isobus_vt
                     }
                 }
             }
+        }
         }
         LOG_INFO("[VT Server]: Initialized Object Pool Disk Cache: loaded %zu cached versions from disk", loadedCount);
     }

@@ -344,20 +344,27 @@ namespace isobus_vt
             TractorEcuManager::get_instance().process_can_frame(frame.identifier, frame.data, frame.dataLength);
         }
 
-        // Forward to IsobusFileServer (ISO 11783-13)
-        IsobusFileServer::get_instance().process_can_frame(
-            id.get_parameter_group_number(),
-            id.get_source_address(),
-            id.get_destination_address(),
-            frame.data,
-            frame.dataLength);
+        // Forward to IsobusFileServer (ISO 11783-13) ONLY for File Server request (0xB100)
+        std::uint32_t pgnVal = id.get_parameter_group_number();
+        if ((pgnVal & 0xFF00) == 0xB100 || pgnVal == 45312)
+        {
+            IsobusFileServer::get_instance().process_can_frame(
+                pgnVal,
+                id.get_source_address(),
+                id.get_destination_address(),
+                frame.data,
+                frame.dataLength);
+        }
 
-        // Forward to DdiExplorerManager (ISO 11783-11)
-        DdiExplorerManager::get_instance().record_process_data_from_can(
-            id.get_parameter_group_number(),
-            id.get_source_address(),
-            frame.data,
-            frame.dataLength);
+        // Forward to DdiExplorerManager (ISO 11783-11) ONLY for Process Data (0xCB00 or 0xFE4A)
+        if (pgnVal == 0xCB00 || pgnVal == 0xFE4A)
+        {
+            DdiExplorerManager::get_instance().record_process_data_from_can(
+                pgnVal,
+                id.get_source_address(),
+                frame.data,
+                frame.dataLength);
+        }
 
         if (id.get_source_address() == 132)
         {

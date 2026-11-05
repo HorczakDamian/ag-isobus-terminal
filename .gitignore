@@ -25,7 +25,6 @@ CMakeCache.txt
 *.zip
 
 # Dynamic caches, crash logs & user settings
-object_pool_cache/
 *.log
 *.dmp
 *.ini
@@ -67,3 +66,6 @@ aux_inputs/
 !PCANBasic.dll
 !AOG-TaskController.exe
 !vt_settings.ini
+
+!object_pool_cache/
+!object_pool_cache/**
