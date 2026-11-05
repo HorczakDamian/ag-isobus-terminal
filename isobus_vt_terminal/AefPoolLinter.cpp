@@ -277,11 +277,15 @@ namespace isobus_vt
             }
         }
 
-        // Compute Conformance Score (100% minus penalties)
+        // Compute Conformance Score (100% minus penalties for errors & warnings)
+        // Wskazowki (Info) sa czysto informacyjne dla programistow maszyny i nie obnizaja zgodnosci
         float score = 100.0f;
         score -= (report.criticalErrorsCount * 25.0f);
-        score -= (report.warningsCount * 5.0f);
-        score -= (report.infosCount * 1.0f);
+        score -= (report.warningsCount * 3.0f);
+        if (report.criticalErrorsCount == 0 && report.warningsCount == 0)
+        {
+            score = 100.0f;
+        }
         report.aefScorePct = std::clamp(score, 0.0f, 100.0f);
 
         currentReport = report;
@@ -343,13 +347,13 @@ namespace isobus_vt
         ImGui::TextColored(ImVec4(0.35f, 0.85f, 1.0f, 1.0f), "Walidator Zgodnosci Puli Maszyny z Wytycznymi AEF & ISO 11783-6");
 
         ImGui::SameLine(ImGui::GetWindowWidth() - 360.0f);
-        if (ImGui::Button("🔍 Uruchom Audyt Puli (AEF)"))
+        if (ImGui::Button("[ Uruchom Audyt Puli (AEF) ]"))
         {
             run_audit();
         }
 
         ImGui::SameLine();
-        if (ImGui::Button("📄 Eksportuj Raport HTML"))
+        if (ImGui::Button("[ Eksportuj Raport HTML ]"))
         {
             if (export_report_to_html("raport_zgodnosci_aef.html"))
             {
@@ -386,6 +390,15 @@ namespace isobus_vt
 
         ImGui::ProgressBar(currentReport.aefScorePct / 100.0f, ImVec2(-1, 16.0f), "");
 
+        if (currentReport.criticalErrorsCount == 0 && currentReport.warningsCount == 0)
+        {
+            ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "[ ZGODNOSC 100%% ]: Pula obiektow jest w pelni poprawna i bezpieczna. Brak bledow i ostrzezen.");
+        }
+        if (currentReport.infosCount > 0)
+        {
+            ImGui::TextDisabled("Wskazowki (INFO: %u): Obiekty pomocnicze, podrzedne kontenery lub grafiki uzywane przez maszyne dynamicznie.", currentReport.infosCount);
+        }
+
         ImGui::Separator();
 
         // Severity filter
@@ -420,15 +433,15 @@ namespace isobus_vt
                 ImGui::TableNextColumn();
                 if (iss.severity == LinterSeverity::Error)
                 {
-                    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "⛔ BLAD");
+                    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "[BLAD]");
                 }
                 else if (iss.severity == LinterSeverity::Warning)
                 {
-                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f), "⚠️ OSTRZ.");
+                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f), "[OSTRZ.]");
                 }
                 else
                 {
-                    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "ℹ️ INFO");
+                    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "INFO");
                 }
 
                 // 2. Rule
