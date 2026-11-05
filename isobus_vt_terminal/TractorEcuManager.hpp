@@ -30,6 +30,7 @@ namespace isobus_vt
         FendtVario,
         CaseNewHolland,
         Claas,
+        DeutzFahr,
         Custom
     };
 
@@ -93,6 +94,9 @@ namespace isobus_vt
         float engineRpm = 0.0f;
         float engineLoadPct = 0.0f;
         float coolantTempC = 0.0f;
+        float oilTempC = 0.0f;
+        float boostPressureKpa = 0.0f;
+        float engineHours = 0.0f;
 
         // Paliwo (Fuel)
         float fuelRateLitersPerHour = 0.0f;

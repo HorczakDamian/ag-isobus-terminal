@@ -66,14 +66,14 @@ namespace isobus_vt
             { "Case IH Puma / Magnum", "TractorSideCase.png", "BrandCase.png", TractorBrandProfile::CaseNewHolland },
             { "Claas Axion / Arion", "TractorSideClaas.png", "BrandClaas.png", TractorBrandProfile::Claas },
             { "New Holland T7 / T8", "TractorSideNewHolland.png", "BrandNewHolland.png", TractorBrandProfile::CaseNewHolland },
-            { "Deutz-Fahr Agrotron Series", "TractorSideDeutz.png", "BrandDeutz.png", TractorBrandProfile::StandardIsoJ1939 },
+            { "Deutz-Fahr Agrotron Series", "TractorSideDeutz.png", "BrandDeutz.png", TractorBrandProfile::DeutzFahr },
             { "Valtra T / S Series", "TractorSideValtra.png", "BrandValtra.png", TractorBrandProfile::StandardIsoJ1939 },
             { "Massey Ferguson 7S / 8S", "TractorSideMassey.png", "BrandMassey.png", TractorBrandProfile::StandardIsoJ1939 },
             { "Ursus C-360 / 1614", "TractorSideUrsus.png", "BrandUrsus.png", TractorBrandProfile::StandardIsoJ1939 },
             { "Steyr Profi / Terrus", "TractorSideSteyr.png", "BrandSteyr.png", TractorBrandProfile::CaseNewHolland },
             { "Kubota M7 / M8", "TractorSideKubota.png", "BrandKubota.png", TractorBrandProfile::StandardIsoJ1939 },
             { "JCB Fastrac", "TractorSideJCB.png", "BrandJCB.png", TractorBrandProfile::StandardIsoJ1939 },
-            { "Same Iron / Fortis", "TractorSideSame.png", "BrandSame.png", TractorBrandProfile::StandardIsoJ1939 },
+            { "Same Iron / Fortis", "TractorSideSame.png", "BrandSame.png", TractorBrandProfile::DeutzFahr },
             { "AgOpenGPS Classic", "TractorSideAoG.png", "BrandAoG.png", TractorBrandProfile::StandardIsoJ1939 }
         };
     }
@@ -308,6 +308,7 @@ namespace isobus_vt
                 case TractorBrandProfile::FendtVario: targetModelIdx = 1; break;
                 case TractorBrandProfile::CaseNewHolland: targetModelIdx = 2; break;
                 case TractorBrandProfile::Claas: targetModelIdx = 3; break;
+                case TractorBrandProfile::DeutzFahr: targetModelIdx = 5; break;
                 case TractorBrandProfile::Custom: targetModelIdx = 13; break;
                 case TractorBrandProfile::StandardIsoJ1939: default: targetModelIdx = 5; break;
             }
@@ -381,6 +382,29 @@ namespace isobus_vt
             fieldConfigs.push_back({ "Temperatura Plynu (C)", 65262, 0, 1, 1.0f, -40.0f, -40.0f, 125.0f, "C", true });
             fieldConfigs.push_back({ "Predkosc Radaru (km/h)", 65096, 0, 2, 0.0036f, 0.0f, 0.0f, 70.0f, "km/h", true });
             fieldConfigs.push_back({ "Predkosc Kol (km/h)", 65096, 2, 2, 0.0036f, 0.0f, 0.0f, 70.0f, "km/h", true });
+        }
+        else if (profile == TractorBrandProfile::DeutzFahr)
+        {
+            // Deutz-Fahr / Same (SDF Agrotron / TTV / Profiline / EMR3 / EMR4 / EDC17)
+            fieldConfigs.push_back({ "TUZ Tyl (ISO HPC %)", 65093, 0, 1, 0.4f, 0.0f, 0.0f, 100.0f, "%", true });
+            fieldConfigs.push_back({ "TUZ Przod (ISO HPC %)", 65093, 1, 1, 0.4f, 0.0f, 0.0f, 100.0f, "%", true });
+            fieldConfigs.push_back({ "TUZ Stan Roboczy (In-Work)", 65093, 2, 1, 1.0f, 0.0f, 0.0f, 3.0f, "bit", true });
+            fieldConfigs.push_back({ "SDF EHR Pozycja K-CAN (%)", 65282, 0, 1, 0.4f, 0.0f, 0.0f, 100.0f, "%", true });
+            fieldConfigs.push_back({ "SDF AgroSky / iMonitor Przelacznik Roboczy", 65302, 0, 1, 1.0f, 0.0f, 0.0f, 3.0f, "bit", true });
+            fieldConfigs.push_back({ "WOM Tyl (Obroty RPM)", 65091, 0, 2, 0.125f, 0.0f, 0.0f, 2500.0f, "RPM", true });
+            fieldConfigs.push_back({ "WOM Przod (Obroty RPM)", 65091, 2, 2, 0.125f, 0.0f, 0.0f, 2500.0f, "RPM", true });
+            fieldConfigs.push_back({ "Obroty Silnika Deutz TCD (RPM)", 61444, 3, 2, 0.125f, 0.0f, 0.0f, 3500.0f, "RPM", true });
+            fieldConfigs.push_back({ "Obciazenie Silnika Deutz (%)", 61444, 2, 1, 1.0f, -125.0f, 0.0f, 100.0f, "%", true });
+            fieldConfigs.push_back({ "Spalanie Chwilowe Deutz (l/h)", 65266, 0, 2, 0.05f, 0.0f, 0.0f, 150.0f, "l/h", true });
+            fieldConfigs.push_back({ "Poziom Paliwa w Baku (%)", 65276, 1, 1, 0.4f, 0.0f, 0.0f, 100.0f, "%", true });
+            fieldConfigs.push_back({ "Temperatura Plynu Deutz (C)", 65262, 0, 1, 1.0f, -40.0f, -40.0f, 125.0f, "C", true });
+            fieldConfigs.push_back({ "Temperatura Oleju Silnika (C)", 65262, 2, 2, 0.03125f, -273.0f, -40.0f, 150.0f, "C", true });
+            fieldConfigs.push_back({ "Cisnienie Doladowania Turbo (kPa)", 65270, 1, 1, 2.0f, 0.0f, 0.0f, 500.0f, "kPa", true });
+            fieldConfigs.push_back({ "Predkosc Radaru (km/h)", 65096, 0, 2, 0.0036f, 0.0f, 0.0f, 70.0f, "km/h", true });
+            fieldConfigs.push_back({ "Predkosc Kol (km/h)", 65096, 2, 2, 0.0036f, 0.0f, 0.0f, 70.0f, "km/h", true });
+            fieldConfigs.push_back({ "SDF Hydraulika / Aux Zawor 1 (%)", 65092, 0, 2, 0.1f, 0.0f, 0.0f, 100.0f, "%", true });
+            fieldConfigs.push_back({ "SDF Hydraulika / Aux Zawor 2 (%)", 65092, 2, 2, 0.1f, 0.0f, 0.0f, 100.0f, "%", true });
+            fieldConfigs.push_back({ "Motogodziny Silnika (h)", 65248, 4, 4, 0.05f, 0.0f, 0.0f, 50000.0f, "h", true });
         }
         else
         {
@@ -503,7 +527,7 @@ namespace isobus_vt
 
             float val = (static_cast<float>(rawVal) * cfg.scale) + cfg.offset;
 
-            if (cfg.name.find("TUZ Tyl") != std::string::npos || cfg.name.find("Hitch Proprietary") != std::string::npos)
+            if (cfg.name.find("TUZ Tyl") != std::string::npos || cfg.name.find("Hitch Proprietary") != std::string::npos || cfg.name.find("SDF EHR") != std::string::npos)
             {
                 telemetry.rearHitchPositionPct = std::clamp(val, 0.0f, 100.0f);
                 telemetry.isRearHitchLowered = (telemetry.rearHitchPositionPct <= hitchLoweredThresholdPct);
@@ -513,9 +537,13 @@ namespace isobus_vt
                 telemetry.frontHitchPositionPct = std::clamp(val, 0.0f, 100.0f);
                 telemetry.isFrontHitchLowered = (telemetry.frontHitchPositionPct <= hitchLoweredThresholdPct);
             }
-            else if (cfg.name.find("TUZ Stan Roboczy") != std::string::npos || cfg.name.find("Przelacznik") != std::string::npos || cfg.name.find("UCM Status") != std::string::npos)
+            else if (cfg.name.find("TUZ Stan Roboczy") != std::string::npos || cfg.name.find("Przelacznik") != std::string::npos || cfg.name.find("UCM Status") != std::string::npos || cfg.name.find("Roboczy") != std::string::npos)
             {
                 telemetry.hitchStatusBitfield = static_cast<uint8_t>(rawVal);
+                if (rawVal == 1 || (rawVal & 0x01))
+                {
+                    telemetry.isRearHitchLowered = true;
+                }
             }
             else if (cfg.name.find("WOM Tyl") != std::string::npos)
             {
@@ -554,6 +582,18 @@ namespace isobus_vt
             else if (cfg.name.find("Temperatura Plynu") != std::string::npos)
             {
                 telemetry.coolantTempC = val;
+            }
+            else if (cfg.name.find("Temperatura Oleju") != std::string::npos)
+            {
+                telemetry.oilTempC = val;
+            }
+            else if (cfg.name.find("Doladowani") != std::string::npos || cfg.name.find("Turbo") != std::string::npos)
+            {
+                telemetry.boostPressureKpa = val;
+            }
+            else if (cfg.name.find("Motogodziny") != std::string::npos)
+            {
+                telemetry.engineHours = val;
             }
             else if (cfg.name.find("Predkosc Radaru") != std::string::npos)
             {
@@ -822,6 +862,14 @@ namespace isobus_vt
             ImGui::ProgressBar(t.engineLoadPct / 100.0f, ImVec2(-1, 14), "");
             ImGui::Spacing();
             ImGui::Text("Temp. plynu: %.1f C", t.coolantTempC);
+            if (t.oilTempC > 0.0f)
+            {
+                ImGui::Text("Temp. oleju: %.1f C", t.oilTempC);
+            }
+            if (t.boostPressureKpa > 0.0f)
+            {
+                ImGui::Text("Turbo: %.0f kPa", t.boostPressureKpa);
+            }
 
             // Kolumna 2: Paliwo
             ImGui::TableNextColumn();
@@ -831,6 +879,11 @@ namespace isobus_vt
             ImGui::Spacing();
             ImGui::Text("Poziom w baku: %.0f%%", t.fuelLevelPct);
             ImGui::ProgressBar(t.fuelLevelPct / 100.0f, ImVec2(-1, 14), "");
+            if (t.engineHours > 0.1f)
+            {
+                ImGui::Spacing();
+                ImGui::Text("Motogodziny: %.1f h", t.engineHours);
+            }
 
             // Kolumna 3: TUZ i Prędkości
             ImGui::TableNextColumn();
@@ -928,7 +981,7 @@ namespace isobus_vt
         // 2. Profil Ciągnika i Wybór Modelu
         ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "2. Profil Marki Ciagnika i Model:");
         int profChoice = static_cast<int>(currentProfile);
-        const char* profNames = "Standard ISO 11783-7 / SAE J1939\0John Deere (AutoTrac / Tractor)\0Fendt Vario (K-CAN / ISOBUS)\0Case IH / New Holland (CNH)\0Claas (Cebis / Telematics)\0Profil Wlasny (Custom)\0\0";
+        const char* profNames = "Standard ISO 11783-7 / SAE J1939\0John Deere (AutoTrac / Tractor)\0Fendt Vario (K-CAN / ISOBUS)\0Case IH / New Holland (CNH)\0Claas (Cebis / Telematics)\0Deutz-Fahr / Same (SDF Agrotron)\0Profil Wlasny (Custom)\0\0";
         ImGui::SetNextItemWidth(260.0f);
         if (ImGui::Combo("##brand_profile", &profChoice, profNames))
         {
