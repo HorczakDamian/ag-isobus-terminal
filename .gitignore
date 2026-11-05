@@ -61,3 +61,9 @@ aux_inputs/
 *.user
 *.suo
 .vscode/
+
+# Whitelist ready-to-run root executables, libraries and default configuration
+!isobus_vt_terminal.exe
+!PCANBasic.dll
+!AOG-TaskController.exe
+!vt_settings.ini

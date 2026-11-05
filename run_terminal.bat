@@ -1,4 +1,8 @@
 @echo off
 cd /d "%~dp0"
 echo Starting ISOBUS Universal Terminal (VT Server) with AUX-N...
-start "" "build_vt\Release\isobus_vt_terminal.exe"
+if exist "%~dp0isobus_vt_terminal.exe" (
+    start "" "%~dp0isobus_vt_terminal.exe"
+) else (
+    start "" "%~dp0build_vt\Release\isobus_vt_terminal.exe"
+)
