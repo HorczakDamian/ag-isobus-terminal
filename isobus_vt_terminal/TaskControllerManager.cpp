@@ -5,6 +5,7 @@
 #include <ws2tcpip.h>
 
 #include "TaskControllerManager.hpp"
+#include "DdiExplorerManager.hpp"
 #include "FieldNavigation.hpp"
 #include "TcBasReportManager.hpp"
 #include "TractorEcuManager.hpp"
@@ -283,6 +284,7 @@ static void safe_update_tc(isobus::TaskControllerServer* tc)
                                            std::uint8_t &/*errorCodes*/)
     {
         std::lock_guard<std::recursive_mutex> lock(clientMutex);
+        DdiExplorerManager::get_instance().update_ddi_value(dataDescriptionIndex, processDataValue, partner ? partner->get_address() : 0, elementNumber);
         auto it = clients.find(partner);
         if (it == clients.end()) return true;
 

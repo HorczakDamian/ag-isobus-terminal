@@ -21,6 +21,10 @@
 #include "AudioBeeper.hpp"
 #include "TractorEcuManager.hpp"
 #include "TcBasReportManager.hpp"
+#include "IsobusFileServer.hpp"
+#include "DdiExplorerManager.hpp"
+#include "ObjectPoolInspector.hpp"
+#include "AefPoolLinter.hpp" 
 
 #include "isobus/isobus/can_network_manager.hpp"
 #include "isobus/isobus/can_stack_logger.hpp"
@@ -425,6 +429,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 
     auto vtServer = std::make_shared<isobus_vt::CustomVTServer>(vtServerCF);
     vtServer->initialize();
+    isobus_vt::ObjectPoolInspector::get_instance().set_vt_server(vtServer);
+    isobus_vt::AefPoolLinter::get_instance().set_vt_server(vtServer);
 
     auto auxManager = std::make_shared<isobus_vt::AuxManager>(vtServerCF);
     auxManager->initialize();
@@ -451,6 +457,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
     bool showMiniViewsWindow = cfg.showMiniViewsWindow;
     bool showTractorWindow = true;
     bool showTractorPgnConfig = false;
+    bool showFileServerWindow = false;
+    bool showDdiExplorerWindow = false;
+    bool showPoolInspectorWindow = false;
+    bool showAefLinterWindow = false;
     isobus_vt::TractorEcuManager::get_instance().start();
     static bool g_TriggerResetLayout = false;
     bool alarmSoundMuted = cfg.alarmSoundMuted;
@@ -495,6 +505,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
         vtServer->run_update();
         auxManager->update();
         tcManager->update();
+        isobus_vt::IsobusFileServer::get_instance().update();
         isobus_vt::TractorEcuManager::get_instance().update();
 
         // Auto-select active working set if none is active and an object pool is ready
@@ -722,6 +733,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
                 ImGui::Separator();
                 ImGui::MenuItem("Telemetria Ciagnika (TUZ / WOM / Silnik)", nullptr, &showTractorWindow);
                 ImGui::MenuItem("Konfiguracja PGN Ciagnika (2. PCAN)", nullptr, &showTractorPgnConfig);
+                ImGui::EndMenu();
+            }
+
+            // Menu: ISOBUS Tools
+            if (ImGui::BeginMenu("ISOBUS Tools"))
+            {
+                ImGui::MenuItem("ISOBUS File Server (ISO 11783-13)", nullptr, &showFileServerWindow);
+                ImGui::MenuItem("DDI Process Data Explorer (ISO 11783-11)", nullptr, &showDdiExplorerWindow);
+                ImGui::MenuItem("Live Object Pool Tree Browser & Inspector", nullptr, &showPoolInspectorWindow);
+                ImGui::MenuItem("AEF Object Pool Linter & Conformance Checker", nullptr, &showAefLinterWindow);
                 ImGui::EndMenu();
             }
 
@@ -2249,6 +2270,24 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
         if (showTractorPgnConfig && !g_isHudMode)
         {
             isobus_vt::TractorEcuManager::get_instance().render_pgn_config_dialog(&showTractorPgnConfig);
+        }
+
+        // ISOBUS Standard Tools
+        if (showFileServerWindow && !g_isHudMode)
+        {
+            isobus_vt::IsobusFileServer::get_instance().render_file_server_window(&showFileServerWindow);
+        }
+        if (showDdiExplorerWindow && !g_isHudMode)
+        {
+            isobus_vt::DdiExplorerManager::get_instance().render_ddi_explorer_window(&showDdiExplorerWindow);
+        }
+        if (showPoolInspectorWindow && !g_isHudMode)
+        {
+            isobus_vt::ObjectPoolInspector::get_instance().render_inspector_window(&showPoolInspectorWindow);
+        }
+        if (showAefLinterWindow && !g_isHudMode)
+        {
+            isobus_vt::AefPoolLinter::get_instance().render_linter_window(&showAefLinterWindow);
         }
 
             if (g_TriggerResetLayout)

@@ -51,6 +51,8 @@ namespace isobus_vt
     class CanManager
     {
     public:
+        static CanManager* get_active_instance();
+    public:
         CanManager();
         ~CanManager();
 

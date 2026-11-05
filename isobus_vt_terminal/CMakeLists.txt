@@ -67,6 +67,14 @@ set(VT_TERMINAL_SOURCES
   "TractorEcuManager.cpp"
   "TcBasReportManager.hpp"
   "TcBasReportManager.cpp"
+  "IsobusFileServer.hpp"
+  "IsobusFileServer.cpp"
+  "DdiExplorerManager.hpp"
+  "DdiExplorerManager.cpp"
+  "ObjectPoolInspector.hpp"
+  "ObjectPoolInspector.cpp"
+  "AefPoolLinter.hpp"
+  "AefPoolLinter.cpp" 
   "main.cpp"
   ${IMGUI_SOURCES}
 )

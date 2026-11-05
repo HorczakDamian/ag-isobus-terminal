@@ -1,4 +1,6 @@
 #include "CanManager.hpp"
+#include "IsobusFileServer.hpp"
+#include "DdiExplorerManager.hpp"
 #include "TractorEcuManager.hpp"
 #include "isobus/hardware_integration/PCANBasic.h"
 #include "isobus/isobus/can_identifier.hpp"
@@ -11,8 +13,11 @@
 
 namespace isobus_vt
 {
+    static CanManager *g_ActiveCanManager = nullptr;
+    CanManager* CanManager::get_active_instance() { return g_ActiveCanManager; }
     CanManager::CanManager()
     {
+        g_ActiveCanManager = this;
         isobus::CANHardwareInterface::get_can_frame_received_event_dispatcher().add_listener([this](const isobus::CANMessageFrame &frame) {
             on_frame_received(frame);
         });
@@ -24,6 +29,7 @@ namespace isobus_vt
 
     CanManager::~CanManager()
     {
+        if (g_ActiveCanManager == this) g_ActiveCanManager = nullptr;
         shutdown();
     }
 
@@ -327,6 +333,8 @@ namespace isobus_vt
             lastFpsCalcTimestamp = now;
         }
 
+        isobus::CANIdentifier id(frame.identifier);
+
         // Process J1939 DM1/DM2 diagnostics
         process_j1939_diagnostics(frame);
 
@@ -336,7 +344,20 @@ namespace isobus_vt
             TractorEcuManager::get_instance().process_can_frame(frame.identifier, frame.data, frame.dataLength);
         }
 
-        isobus::CANIdentifier id(frame.identifier);
+        // Forward to IsobusFileServer (ISO 11783-13)
+        IsobusFileServer::get_instance().process_can_frame(
+            id.get_parameter_group_number(),
+            id.get_source_address(),
+            id.get_destination_address(),
+            frame.data,
+            frame.dataLength);
+
+        // Forward to DdiExplorerManager (ISO 11783-11)
+        DdiExplorerManager::get_instance().record_process_data_from_can(
+            id.get_parameter_group_number(),
+            id.get_source_address(),
+            frame.data,
+            frame.dataLength);
 
         if (id.get_source_address() == 132)
         {
@@ -426,6 +447,8 @@ namespace isobus_vt
             case 0xFECA: return "Active DTCs (DM1)";
             case 0xFECB: return "Previous DTCs (DM2)";
             case 0xCB00: return "Process Data (TC)";
+            case 0xB100: return "File Server Req (ISO 11783-13)";
+            case 0xB000: return "File Server Resp (ISO 11783-13)";
             default:
             {
                 std::ostringstream ss;
