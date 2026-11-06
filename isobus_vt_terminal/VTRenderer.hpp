@@ -11,6 +11,19 @@ namespace isobus_vt
     class CanManager;
     class TaskControllerManager;
 
+    struct TerminalScreenBounds
+    {
+        float x = 0.0f;
+        float y = 0.0f;
+        float width = 0.0f;
+        float height = 0.0f;
+        float maskX = 0.0f;
+        float maskY = 0.0f;
+        float maskW = 0.0f;
+        float maskH = 0.0f;
+        bool valid = false;
+    };
+
     class VTRenderer
     {
     public:
@@ -28,6 +41,9 @@ namespace isobus_vt
             customHeight = height;
         }
         void open_settings_dialog() { showMainSettingsDialog = true; }
+        void trigger_soft_key_index(int keyIdx, bool pressed);
+        void trigger_virtual_touch(float relX, float relY, bool down);
+        TerminalScreenBounds get_terminal_screen_bounds() const { return terminalBounds; }
         void set_managers(std::shared_ptr<CanManager> canMgr, std::shared_ptr<TaskControllerManager> tcMgr)
         {
             canManager = canMgr;
@@ -35,6 +51,7 @@ namespace isobus_vt
         }
 
     private:
+        TerminalScreenBounds terminalBounds;
         std::shared_ptr<CustomVTServer> vtServer;
         std::shared_ptr<CanManager> canManager = nullptr;
         std::shared_ptr<TaskControllerManager> tcManager = nullptr;

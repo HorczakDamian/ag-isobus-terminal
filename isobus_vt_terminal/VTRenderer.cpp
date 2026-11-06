@@ -19,7 +19,8 @@
 #include "TractorEcuManager.hpp"
 #include "IsobusFileServer.hpp"
 #include "DdiExplorerManager.hpp"
-#include "AmazoneBridge.hpp" 
+#include "AmazoneBridge.hpp"
+#include "WebVtServer.hpp" 
 #include "isobus/isobus/isobus_virtual_terminal_objects.hpp"
 #include "isobus/isobus/can_network_manager.hpp"
 
@@ -878,6 +879,8 @@ namespace isobus_vt
         dl->AddRectFilled(origin, bezelBR, bezelBg, bezelRounding);
         dl->AddRect(origin, bezelBR, bezelBorder, bezelRounding, 0, bezelThickness);
 
+
+
         // Draw Müller-Elektronik TOUCH800 Top Header Bar
         if (cfg.bezelStyle == 0)
         {
@@ -957,6 +960,16 @@ namespace isobus_vt
             wsPos = ImVec2(skPos.x + SK_W + 4.0f, contentTop);
             maskPos = ImVec2(wsPos.x + WS_W + 4.0f, contentTop);
         }
+
+        terminalBounds.x = origin.x;
+        terminalBounds.y = origin.y;
+        terminalBounds.width = bezelBR.x - origin.x;
+        terminalBounds.height = bezelBR.y - origin.y;
+        terminalBounds.maskX = maskPos.x;
+        terminalBounds.maskY = maskPos.y;
+        terminalBounds.maskW = DATA_W;
+        terminalBounds.maskH = DATA_H;
+        terminalBounds.valid = true;
 
         // ── Working Set / ECU Designator Bar ──
         bool isMuller = (cfg.bezelStyle == 0);
@@ -2791,6 +2804,29 @@ namespace isobus_vt
                             ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.2f, 1.0f), "  [Status: Wylaczony - ramki AmaClick nie sa wysylane na CAN]");
                         ImGui::Unindent();
 
+                        // 8. Web-VT (Wi-Fi Tablet Access)
+                        ImGui::Spacing();
+                        if (ImGui::Checkbox("Wlacz Web-VT (Dostep przez Wi-Fi na Tablecie w kabinie)", &cfg.webVtEnabled))
+                        {
+                            WebVtServer::get_instance().set_enabled(cfg.webVtEnabled);
+                        }
+                        ImGui::Indent();
+                        ImGui::TextDisabled("Pozwala wyswietlic pelny terminal ISOBUS na tablecie (iPad/Android) w kabinie przez Wi-Fi.");
+                        if (cfg.webVtEnabled)
+                        {
+                            ImGui::TextColored(ImVec4(0.2f, 0.95f, 0.4f, 1.0f), "  [Adres na tablecie: %s]", WebVtServer::get_instance().get_url().c_str());
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton("Kopiuj URL"))
+                            {
+                                ImGui::SetClipboardText(WebVtServer::get_instance().get_url().c_str());
+                            }
+                        }
+                        else
+                        {
+                            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "  [Status: Wylaczony (Opcja)]");
+                        }
+                        ImGui::Unindent();
+
                         ImGui::EndTabItem();
                     }
 
@@ -3505,6 +3541,126 @@ namespace isobus_vt
         }
 
         ImGui::End();
+    }
+
+    void VTRenderer::trigger_soft_key_index(int keyIdx, bool pressed)
+    {
+        if (!vtServer) return;
+        auto ws = vtServer->get_active_ws();
+        if (!ws) return;
+
+        std::uint16_t skMaskId = vtServer->get_active_soft_key_mask_id();
+        auto skMaskObj = ws->get_object_by_id(skMaskId);
+        if (!skMaskObj) return;
+
+        if (keyIdx < 0 || keyIdx >= static_cast<int>(skMaskObj->get_number_children())) return;
+
+        auto keyId = skMaskObj->get_child_id(static_cast<std::uint16_t>(keyIdx));
+        auto keyObj = ws->get_object_by_id(keyId);
+        if (keyObj && keyObj->get_object_type() == isobus::VirtualTerminalObjectType::ObjectPointer)
+        {
+            auto ptr = std::dynamic_pointer_cast<isobus::ObjectPointer>(keyObj);
+            if (ptr) keyObj = ws->get_object_by_id(ptr->get_value());
+        }
+        if (!keyObj) return;
+
+        std::uint8_t code = static_cast<std::uint8_t>(keyIdx + 1);
+        if (auto keyCast = std::dynamic_pointer_cast<isobus::Key>(keyObj))
+        {
+            code = keyCast->get_key_code();
+        }
+
+        vtServer->activate_soft_key(keyObj->get_id(), skMaskId, code, pressed);
+        if (pressed)
+        {
+            vtServer->trigger_macro(keyObj, isobus::EventID::OnKeyPress, isobus::VirtualTerminalObjectType::Key);
+            AudioBeeper::get_instance().play_soft_key_click();
+        }
+        else
+        {
+            vtServer->trigger_macro(keyObj, isobus::EventID::OnKeyRelease, isobus::VirtualTerminalObjectType::Key);
+        }
+    }
+
+    void VTRenderer::trigger_virtual_touch(float relX, float relY, bool down)
+    {
+        if (!vtServer) return;
+        auto ws = vtServer->get_active_ws();
+        if (!ws) return;
+
+        std::uint16_t maskId = vtServer->get_working_set_active_mask(ws);
+        auto activeMask = ws->get_object_by_id(maskId);
+        if (!activeMask) return;
+
+        const auto &cfg = TerminalSettings::get_instance().get_config();
+        int maskW = cfg.dataMaskWidth;
+        int maskH = cfg.dataMaskHeight;
+
+        float dmRelX = relX;
+        float dmRelY = relY;
+
+        if (terminalBounds.valid && terminalBounds.width > 0.0f && terminalBounds.maskW > 0.0f)
+        {
+            float relMaskX = (terminalBounds.maskX - terminalBounds.x) / terminalBounds.width;
+            float relMaskY = (terminalBounds.maskY - terminalBounds.y) / terminalBounds.height;
+            float relMaskW = terminalBounds.maskW / terminalBounds.width;
+            float relMaskH = terminalBounds.maskH / terminalBounds.height;
+
+            if (relX >= relMaskX && relX <= (relMaskX + relMaskW) &&
+                relY >= relMaskY && relY <= (relMaskY + relMaskH))
+            {
+                dmRelX = (relX - relMaskX) / relMaskW;
+                dmRelY = (relY - relMaskY) / relMaskH;
+            }
+            else if (relX > (relMaskX + relMaskW))
+            {
+                int keyIdx = static_cast<int>(std::clamp((relY - relMaskY) / relMaskH, 0.0f, 0.999f) * 6.0f);
+                trigger_soft_key_index(keyIdx, down);
+                return;
+            }
+            else if (relX < relMaskX)
+            {
+                if (relY > 0.70f)
+                {
+                    vtServer->send_alarm_ack_command(down);
+                    if (down) AudioBeeper::get_instance().play_ack_chime();
+                    return;
+                }
+                else if (down)
+                {
+                    float desH = 68.0f;
+                    int wsIdx = static_cast<int>((relY * terminalBounds.height - 38.0f) / desH);
+                    if (wsIdx >= 0 && wsIdx < static_cast<int>(vtServer->get_all_ws().size()))
+                    {
+                        AudioBeeper::get_instance().play_touch_click();
+                        vtServer->switch_working_set(static_cast<std::size_t>(wsIdx));
+                    }
+                    return;
+                }
+            }
+        }
+
+        int px = static_cast<int>(std::clamp(dmRelX, 0.0f, 1.0f) * maskW);
+        int py = static_cast<int>(std::clamp(dmRelY, 0.0f, 1.0f) * maskH);
+
+        auto clickedObj = get_clicked_child_recursive(activeMask, px, py, ws);
+        if (!clickedObj) return;
+
+        if (clickedObj->get_object_type() == isobus::VirtualTerminalObjectType::Button)
+        {
+            auto btn = std::dynamic_pointer_cast<isobus::Button>(clickedObj);
+            std::uint8_t kc = btn ? btn->get_key_code() : 1;
+            vtServer->activate_button(clickedObj->get_id(), maskId, kc, down);
+            if (down)
+            {
+                vtServer->trigger_macro(clickedObj, isobus::EventID::OnKeyPress, isobus::VirtualTerminalObjectType::Button);
+                AudioBeeper::get_instance().play_touch_click();
+            }
+            else
+            {
+                vtServer->trigger_macro(clickedObj, isobus::EventID::OnKeyRelease, isobus::VirtualTerminalObjectType::Button);
+            }
+        }
     }
 
 } // namespace isobus_vt

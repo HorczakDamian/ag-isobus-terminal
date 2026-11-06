@@ -60,6 +60,15 @@ namespace isobus_vt
         std::string aogSubnet = "192.168.5";// Subnet for UDP broadcast
         bool autoBoomSections = true;       // Automatically map DDOP boom sections
 
+        // Tractor CAN 2 & Auto-Detect
+        int tractorPcanChannel = 0x52;      // PCAN_USBBUS2 (0x52)
+        int tractorCanBaud = 250000;        // 250000 or 500000
+        int tractorCanSource = 0;           // 0: SecondPcanUsb, 1: SharedWithCan1, 2: Simulation
+
+        // Web-VT (Wi-Fi Tablet Access)
+        bool webVtEnabled = true;          // Opcjonalny serwer Web-VT dla tabletu
+        int webVtPort = 8080;               // Port serwera WWW
+
         // ── Panel Visibility States ──
         bool showAogTcWindow = true;
         bool showAuxWindow = true;

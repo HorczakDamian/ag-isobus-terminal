@@ -77,6 +77,8 @@ set(VT_TERMINAL_SOURCES
   "AefPoolLinter.cpp" 
   "AmazoneBridge.hpp"
   "AmazoneBridge.cpp"
+  "WebVtServer.hpp"
+  "WebVtServer.cpp"
   "main.cpp"
   ${IMGUI_SOURCES}
 )
@@ -102,6 +104,7 @@ target_link_libraries(isobus_vt_terminal PRIVATE
   winmm
   gdiplus
   shell32
+  ws2_32
 )
 
 if(MSVC)

@@ -25,7 +25,9 @@
 #include "DdiExplorerManager.hpp"
 #include "ObjectPoolInspector.hpp"
 #include "AefPoolLinter.hpp"
-#include "AmazoneBridge.hpp" 
+#include "AmazoneBridge.hpp"
+#include "WebVtServer.hpp"
+#include <gdiplus.h> 
 
 #include "isobus/isobus/can_network_manager.hpp"
 #include "isobus/isobus/can_stack_logger.hpp"
@@ -93,6 +95,162 @@ bool CreateDeviceD3D(HWND hWnd);
 void CleanupDeviceD3D();
 void CreateRenderTarget();
 void CleanupRenderTarget();
+
+static ID3D11Texture2D* g_pWebVtStagingTexture = nullptr;
+static UINT g_webVtStagingWidth = 0;
+static UINT g_webVtStagingHeight = 0;
+
+void CaptureBackBufferForWebVt(IDXGISwapChain* pSwapChain, ID3D11Device* pDevice, ID3D11DeviceContext* pContext, std::shared_ptr<isobus_vt::VTRenderer> vtRenderer = nullptr)
+{
+    if (!pSwapChain || !pDevice || !pContext) return;
+    if (!isobus_vt::WebVtServer::get_instance().is_enabled()) return;
+
+    static auto lastCaptureTime = std::chrono::steady_clock::now();
+    auto now = std::chrono::steady_clock::now();
+    int minIntervalMs = (isobus_vt::WebVtServer::get_instance().get_client_count() > 0) ? 65 : 300;
+    if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastCaptureTime).count() < minIntervalMs) return;
+    lastCaptureTime = now;
+
+    ID3D11Texture2D* pBackBuffer = nullptr;
+    if (FAILED(pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer))) || !pBackBuffer) return;
+
+    D3D11_TEXTURE2D_DESC desc;
+    pBackBuffer->GetDesc(&desc);
+
+    if (!g_pWebVtStagingTexture || g_webVtStagingWidth != desc.Width || g_webVtStagingHeight != desc.Height)
+    {
+        if (g_pWebVtStagingTexture) { g_pWebVtStagingTexture->Release(); g_pWebVtStagingTexture = nullptr; }
+        desc.Usage = D3D11_USAGE_STAGING;
+        desc.BindFlags = 0;
+        desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        desc.MiscFlags = 0;
+        if (FAILED(pDevice->CreateTexture2D(&desc, nullptr, &g_pWebVtStagingTexture)))
+        {
+            pBackBuffer->Release();
+            return;
+        }
+        g_webVtStagingWidth = desc.Width;
+        g_webVtStagingHeight = desc.Height;
+    }
+
+    pContext->CopyResource(g_pWebVtStagingTexture, pBackBuffer);
+    pBackBuffer->Release();
+
+    D3D11_MAPPED_SUBRESOURCE mapped;
+    if (SUCCEEDED(pContext->Map(g_pWebVtStagingTexture, 0, D3D11_MAP_READ, 0, &mapped)))
+    {
+        // 1. Determine crop rectangle to capture only the VT machine terminal safely
+        int maxW = static_cast<int>(desc.Width);
+        int maxH = static_cast<int>(desc.Height);
+        int cropX = 0, cropY = 0;
+        int cropW = maxW, cropH = maxH;
+
+        if (vtRenderer)
+        {
+            auto bounds = vtRenderer->get_terminal_screen_bounds();
+            if (bounds.valid && bounds.width >= 30.0f && bounds.height >= 30.0f)
+            {
+                int bx = static_cast<int>(bounds.x);
+                int by = static_cast<int>(bounds.y);
+                int bw = static_cast<int>(bounds.width);
+                int bh = static_cast<int>(bounds.height);
+
+                int cx1 = std::max(0, std::min(maxW - 1, bx));
+                int cy1 = std::max(0, std::min(maxH - 1, by));
+                int cx2 = std::max(cx1 + 1, std::min(maxW, bx + bw));
+                int cy2 = std::max(cy1 + 1, std::min(maxH, by + bh));
+
+                cropX = cx1;
+                cropY = cy1;
+                cropW = cx2 - cx1;
+                cropH = cy2 - cy1;
+            }
+        }
+
+        if (cropW <= 0 || cropH <= 0)
+        {
+            cropX = 0; cropY = 0;
+            cropW = maxW; cropH = maxH;
+        }
+
+        // 2. Extract cropped pixels & correct color swap (DXGI RGBA -> GDI+ ARGB / BGRA)
+        static std::vector<uint32_t> s_bgrPixels;
+        s_bgrPixels.resize(cropW * cropH);
+
+        for (int y = 0; y < cropH; ++y)
+        {
+            const uint32_t* srcRow = reinterpret_cast<const uint32_t*>(
+                static_cast<const BYTE*>(mapped.pData) + (cropY + y) * mapped.RowPitch
+            ) + cropX;
+            uint32_t* dstRow = s_bgrPixels.data() + y * cropW;
+
+            for (int x = 0; x < cropW; ++x)
+            {
+                uint32_t px = srcRow[x];
+                // Swap byte 0 (Red) and byte 2 (Blue) to fix distorted colors
+                dstRow[x] = (px & 0xFF00FF00) | ((px & 0x00FF0000) >> 16) | ((px & 0x000000FF) << 16);
+            }
+        }
+
+        Gdiplus::Bitmap bmp(cropW, cropH, cropW * sizeof(uint32_t), PixelFormat32bppARGB, reinterpret_cast<BYTE*>(s_bgrPixels.data()));
+
+        static CLSID clsidJpeg;
+        static bool clsidInit = false;
+        if (!clsidInit)
+        {
+            UINT num = 0, size = 0;
+            Gdiplus::GetImageEncodersSize(&num, &size);
+            if (size > 0)
+            {
+                std::vector<BYTE> codecBuf(size);
+                Gdiplus::ImageCodecInfo* pCodecs = reinterpret_cast<Gdiplus::ImageCodecInfo*>(codecBuf.data());
+                Gdiplus::GetImageEncoders(num, size, pCodecs);
+                for (UINT j = 0; j < num; ++j)
+                {
+                    if (wcscmp(pCodecs[j].MimeType, L"image/jpeg") == 0)
+                    {
+                        clsidJpeg = pCodecs[j].Clsid;
+                        clsidInit = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (clsidInit)
+        {
+            IStream* pStream = nullptr;
+            if (CreateStreamOnHGlobal(nullptr, TRUE, &pStream) == S_OK)
+            {
+                Gdiplus::EncoderParameters params;
+                params.Count = 1;
+                params.Parameter[0].Guid = Gdiplus::EncoderQuality;
+                params.Parameter[0].Type = Gdiplus::EncoderParameterValueTypeLong;
+                params.Parameter[0].NumberOfValues = 1;
+                ULONG quality = 75; // Crisp quality for machine icons
+                params.Parameter[0].Value = &quality;
+
+                if (bmp.Save(pStream, &clsidJpeg, &params) == Gdiplus::Ok)
+                {
+                    STATSTG stat;
+                    if (pStream->Stat(&stat, STATFLAG_NONAME) == S_OK)
+                    {
+                        ULONG bytesSize = static_cast<ULONG>(stat.cbSize.QuadPart);
+                        std::vector<uint8_t> jpegBytes(bytesSize);
+                        LARGE_INTEGER liZero = {};
+                        pStream->Seek(liZero, STREAM_SEEK_SET, nullptr);
+                        ULONG bytesRead = 0;
+                        pStream->Read(jpegBytes.data(), bytesSize, &bytesRead);
+                        isobus_vt::WebVtServer::get_instance().update_frame(jpegBytes.data(), bytesRead);
+                    }
+                }
+                pStream->Release();
+            }
+        }
+        pContext->Unmap(g_pWebVtStagingTexture, 0);
+    }
+}
+
 LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 // Forward declare ImGui Win32 handler
@@ -629,6 +787,27 @@ static void RenderCockpitHeaderBar(
         }
     }
 
+    // Web-VT Tablet Wi-Fi Badge
+    if (cfg.webVtEnabled)
+    {
+        ImGui::SameLine();
+        bool webRunning = isobus_vt::WebVtServer::get_instance().is_running();
+        ImVec4 webCol = webRunning ? ImVec4(0.2f, 0.85f, 1.0f, 1.0f) : ImVec4(0.6f, 0.6f, 0.6f, 1.0f);
+        ImGui::TextColored(webCol, "[ Wi-Fi Tablet: :%d ]", cfg.webVtPort);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("Dostep przez Wi-Fi na Tablecie w kabinie (Web-VT)");
+            ImGui::Separator();
+            ImGui::TextColored(ImVec4(0.4f, 0.9f, 1.0f, 1.0f), "Wpisz w Safari / Chrome na tablecie:");
+            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.2f, 1.0f), "%s", isobus_vt::WebVtServer::get_instance().get_url().c_str());
+            ImGui::Separator();
+            ImGui::Text("Aktywni uzytkownicy: %d", isobus_vt::WebVtServer::get_instance().get_client_count());
+            ImGui::TextDisabled("iPad, Android, telefon - pelna kontrola dotykowa!");
+            ImGui::EndTooltip();
+        }
+    }
+
     // System Clock
     SYSTEMTIME st;
     GetLocalTime(&st);
@@ -912,6 +1091,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 {
     SetUnhandledExceptionFilter(CrashFilter);
 
+    ULONG_PTR gdiplusToken = 0;
+    Gdiplus::GdiplusStartupInput gdiplusStartupInput;
+    Gdiplus::GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, nullptr);
+
     std::wstring exeDir = GetExecutableDir();
     g_TerminalLogger = std::make_unique<TerminalFileLogger>(exeDir + L"\\vt_terminal.log");
     // Create Application Window
@@ -1056,11 +1239,32 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
     isobus_vt::IsobusFileServer::get_instance().set_enabled(cfg.fileServerEnabled);
     isobus_vt::AmazoneBridge::get_instance().set_enabled(cfg.amazoneBridgeEnabled);
     isobus_vt::DdiExplorerManager::get_instance().set_enabled(cfg.ddiExplorerEnabled);
+    isobus_vt::TractorEcuManager::get_instance().set_source(static_cast<isobus_vt::TractorCanSource>(cfg.tractorCanSource));
+    isobus_vt::TractorEcuManager::get_instance().set_pcan_channel(static_cast<TPCANHandle>(cfg.tractorPcanChannel));
+    isobus_vt::TractorEcuManager::get_instance().set_pcan_baudrate(cfg.tractorCanBaud == 500000 ? PCAN_BAUD_500K : (cfg.tractorCanBaud == 125000 ? PCAN_BAUD_125K : PCAN_BAUD_250K));
     isobus_vt::TractorEcuManager::get_instance().set_enabled(cfg.tecuEnabled);
     if (cfg.tecuEnabled)
     {
         isobus_vt::TractorEcuManager::get_instance().start();
     }
+
+    // Web-VT Server for In-Cab Tablets (iPad / Android)
+    isobus_vt::WebVtServer::get_instance().set_port(cfg.webVtPort);
+    isobus_vt::WebVtServer::get_instance().set_touch_callback([vtRenderer](float rx, float ry, bool down) {
+        if (vtRenderer) vtRenderer->trigger_virtual_touch(rx, ry, down);
+    });
+    isobus_vt::WebVtServer::get_instance().set_softkey_callback([vtRenderer](int idx, bool pressed) {
+        if (vtRenderer) vtRenderer->trigger_soft_key_index(idx, pressed);
+    });
+    isobus_vt::WebVtServer::get_instance().set_ack_callback([vtServer]() {
+        if (vtServer)
+        {
+            vtServer->send_alarm_ack_command(true);
+            vtServer->send_alarm_ack_command(false);
+            isobus_vt::AudioBeeper::get_instance().play_ack_chime();
+        }
+    });
+    isobus_vt::WebVtServer::get_instance().set_enabled(cfg.webVtEnabled);
 
     // UI state variables initialized from persistent configuration
     bool showAuxWindow = cfg.showAuxWindow && cfg.auxEnabled;
@@ -1641,6 +1845,25 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
                 ImGui::Text("Szyna: %s", isobus_vt::TractorEcuManager::get_instance().get_status_string().c_str());
                 ImGui::EndTooltip();
             }
+            }
+
+            // Web-VT Tablet Badge
+            if (cfg.webVtEnabled)
+            {
+                ImGui::SameLine();
+                bool webRunning = isobus_vt::WebVtServer::get_instance().is_running();
+                ImVec4 webCol = webRunning ? ImVec4(0.2f, 0.85f, 1.0f, 1.0f) : ImVec4(0.6f, 0.6f, 0.6f, 1.0f);
+                ImGui::TextColored(webCol, "[ 📶 Web-VT: :%d ]", cfg.webVtPort);
+                if (ImGui::IsItemHovered())
+                {
+                    ImGui::BeginTooltip();
+                    ImGui::TextUnformatted("Dostep przez Wi-Fi na Tablecie w kabinie (Web-VT)");
+                    ImGui::Separator();
+                    ImGui::Text("Adres URL: %s", isobus_vt::WebVtServer::get_instance().get_url().c_str());
+                    ImGui::Text("Podlaczeni uzytkownicy: %d", isobus_vt::WebVtServer::get_instance().get_client_count());
+                    ImGui::TextDisabled("Wpisz powyzszy adres w przegladarce tabletu (iPad / Android).");
+                    ImGui::EndTooltip();
+                }
             }
 
             // VT Version badge
@@ -3158,6 +3381,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
         g_pd3dDeviceContext->OMSetRenderTargets(1, &g_mainRenderTargetView, nullptr);
         g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, clear_color_with_alpha);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+
+        CaptureBackBufferForWebVt(g_pSwapChain, g_pd3dDevice, g_pd3dDeviceContext, vtRenderer);
 
         g_pSwapChain->Present(1, 0); // VSync
     }

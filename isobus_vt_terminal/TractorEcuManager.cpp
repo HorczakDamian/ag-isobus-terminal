@@ -433,6 +433,12 @@ namespace isobus_vt
     void TractorEcuManager::update()
     {
         if (!enabled) return;
+        if (autoDetectState == AutoDetectState::Scanning)
+        {
+            update_auto_detect();
+            return;
+        }
+
         if (currentSource == TractorCanSource::SecondPcanUsb && isConnected)
         {
             TPCANMsg msg;
@@ -492,6 +498,26 @@ namespace isobus_vt
         }
 
         decode_frame(pgn, sa, data, len);
+
+        // Aktualizacja listy wykrytych sterowników (Auto-Sniffer)
+        auto &ecu = discoveredEcus[sa];
+        ecu.sa = sa;
+        if (ecu.name.empty()) ecu.name = get_ecu_name(sa);
+        ecu.frameCount++;
+        if (now > ecu.lastSeenMs && ecu.lastSeenMs > 0)
+        {
+            float dt = (now - ecu.lastSeenMs) / 1000.0f;
+            if (dt > 0.001f)
+            {
+                float instantRate = 1.0f / dt;
+                ecu.frameRateHz = ecu.frameRateHz * 0.85f + instantRate * 0.15f;
+            }
+        }
+        ecu.lastSeenMs = now;
+        if (std::find(ecu.observedPgns.begin(), ecu.observedPgns.end(), pgn) == ecu.observedPgns.end())
+        {
+            if (ecu.observedPgns.size() < 16) ecu.observedPgns.push_back(pgn);
+        }
     }
 
     void TractorEcuManager::decode_frame(std::uint32_t pgn, std::uint8_t sa, const std::uint8_t *data, std::uint8_t len)
@@ -723,6 +749,140 @@ namespace isobus_vt
         sniffedFrames.clear();
     }
 
+    std::string TractorEcuManager::get_ecu_name(std::uint8_t sa)
+    {
+        switch (sa)
+        {
+            case 0x00: return "Silnik Deutz (Engine / EMR4 / EDC)";
+            case 0x01: return "Silnik pomocniczy";
+            case 0x02: return "Turbosprezarka";
+            case 0x03: return "Skrzynia biegow (Transmission / TTV)";
+            case 0x07: return "Sterowanie osiami / Zawieszenie";
+            case 0x0B: return "Uklad hamulcowy (Brakes)";
+            case 0x10: return "Nawigacja satelitarna (GPS)";
+            case 0x11: return "Uklad kierowniczy (Autosteer)";
+            case 0x13: return "Tylny podnosnik TUZ (Rear Hitch)";
+            case 0x17: return "Zestaw wskaznikow (Infocenter / Dashboard)";
+            case 0x19: return "Zawory hydrauliczne SCV";
+            case 0x1C: return "Przedni podnosnik TUZ (Front Hitch)";
+            case 0x1D: return "Przedni walek WOM (Front PTO)";
+            case 0x27: return "Zarzadca ciagnika (Tractor ECU / TECU)";
+            case 0x32: return "Modul Agrosky / Antena GPS";
+            case 0x81: return "Terminal ISOBUS (Virtual Terminal)";
+            case 0xCE: return "Amazone Amatron / AmaClick";
+            case 0xF0: return "AgOpenGPS Virtual TECU";
+            default:
+            {
+                char buf[64];
+                snprintf(buf, sizeof(buf), "Sterownik J1939 (Adres 0x%02X)", sa);
+                return std::string(buf);
+            }
+        }
+    }
+
+    void TractorEcuManager::start_auto_detect()
+    {
+        std::lock_guard<std::mutex> lock(dataMutex);
+        currentSource = TractorCanSource::SecondPcanUsb;
+        autoDetectState = AutoDetectState::Scanning;
+        currentScanBaudIdx = 0;
+        scanStartTimeMs = get_current_time_ms();
+        scanFrameCount = 0;
+        autoDetectResultText = "Testowanie: 250 kbit/s (Standard J1939 / ISOBUS)...";
+
+        CAN_Uninitialize(pcanChannel);
+        TPCANStatus st = CAN_Initialize(pcanChannel, PCAN_BAUD_250K, 0, 0, 0);
+        if (st == PCAN_ERROR_OK)
+        {
+            isConnected = true;
+        }
+    }
+
+    void TractorEcuManager::stop_auto_detect()
+    {
+        std::lock_guard<std::mutex> lock(dataMutex);
+        autoDetectState = AutoDetectState::Idle;
+        autoDetectResultText.clear();
+    }
+
+    bool TractorEcuManager::is_auto_detecting() const
+    {
+        return autoDetectState == AutoDetectState::Scanning;
+    }
+
+    void TractorEcuManager::update_auto_detect()
+    {
+        const TPCANBaudrate bauds[] = { PCAN_BAUD_250K, PCAN_BAUD_500K, PCAN_BAUD_125K, PCAN_BAUD_1M };
+        const char* baudNames[] = { "250 kbit/s (Standard J1939)", "500 kbit/s (Silnik Deutz EMR4 / High-Speed)", "125 kbit/s (Deska / Panel)", "1 Mbit/s" };
+        const int numBauds = 4;
+
+        std::uint32_t now = get_current_time_ms();
+
+        // 1. Probuj czytac ramki
+        TPCANMsg msg;
+        TPCANTimestamp ts;
+        int readInCycle = 0;
+        while (readInCycle++ < 50 && CAN_Read(pcanChannel, &msg, &ts) == PCAN_ERROR_OK)
+        {
+            if (msg.MSGTYPE & PCAN_MESSAGE_EXTENDED)
+            {
+                scanFrameCount++;
+                process_can_frame(msg.ID, msg.DATA, msg.LEN);
+            }
+        }
+
+        // Jezeli odebrano co najmniej 2 ramki -> SUKCES!
+        if (scanFrameCount >= 2)
+        {
+            autoDetectState = AutoDetectState::Success;
+            pcanBaud = bauds[currentScanBaudIdx];
+            char buf[256];
+            snprintf(buf, sizeof(buf), "Wykryto magistrale: %s! Odebrano %u ramek.", baudNames[currentScanBaudIdx], scanFrameCount);
+            autoDetectResultText = buf;
+            statusText = std::string("PCAN-USB (J1939): Polaczono - ") + baudNames[currentScanBaudIdx];
+            isConnected = true;
+            return;
+        }
+
+        // Jezeli minelo 600 ms na dany baudrate bez ramek -> przelacz na nastepny
+        if (now - scanStartTimeMs > 600)
+        {
+            CAN_Uninitialize(pcanChannel);
+            currentScanBaudIdx++;
+            if (currentScanBaudIdx < numBauds)
+            {
+                scanStartTimeMs = now;
+                scanFrameCount = 0;
+                autoDetectResultText = std::string("Testowanie: ") + baudNames[currentScanBaudIdx] + "...";
+                CAN_Initialize(pcanChannel, bauds[currentScanBaudIdx], 0, 0, 0);
+            }
+            else
+            {
+                // Przetestowano wszystkie i cisza
+                autoDetectState = AutoDetectState::Failed;
+                autoDetectResultText = "Brak ramek na wybranym kanale PCAN! Sprawdz: 1) Zaplon ciagnika ON, 2) CAN_H pin 4, CAN_L pin 3, 3) Czy to wlasciwe gniazdo.";
+                pcanBaud = PCAN_BAUD_250K;
+                CAN_Initialize(pcanChannel, pcanBaud, 0, 0, 0);
+            }
+        }
+    }
+
+    std::vector<DiscoveredEcu> TractorEcuManager::get_discovered_ecus()
+    {
+        std::lock_guard<std::mutex> lock(dataMutex);
+        std::vector<DiscoveredEcu> result;
+        result.reserve(discoveredEcus.size());
+        for (const auto &pair : discoveredEcus)
+        {
+            result.push_back(pair.second);
+        }
+        std::sort(result.begin(), result.end(), [](const DiscoveredEcu &a, const DiscoveredEcu &b) {
+            return a.frameCount > b.frameCount;
+        });
+        return result;
+    }
+
+
     // =========================================================================
     // GUI: Pulpit Ciągnika (Tractor Dashboard z grafiką AgOpenGPS)
     // =========================================================================
@@ -758,6 +918,77 @@ namespace isobus_vt
         ImGui::Text("| Mag: %s", (currentSource == TractorCanSource::SecondPcanUsb) ? "PCAN-USB 2" : (currentSource == TractorCanSource::SharedWithCan1 ? "CAN 1 (Shared)" : "SYMULACJA"));
         ImGui::SameLine();
         ImGui::Text("| Ramki: %llu", t.totalFramesReceived);
+
+        // ── Auto-Baudrate & Auto-Sniffer Controls ──
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.4f, 0.85f, 1.0f, 1.0f), "Zrodlo CAN:");
+        ImGui::SameLine();
+        int srcChoice = static_cast<int>(currentSource);
+        ImGui::SetNextItemWidth(170.0f);
+        if (ImGui::Combo("##src_combo", &srcChoice, "PCAN-USB 2 (Dedykowany)\0CAN 1 (Wspoldzielony ISOBUS)\0Symulacja (Test na stole)\0\0"))
+        {
+            set_source(static_cast<TractorCanSource>(srcChoice));
+        }
+
+        if (currentSource == TractorCanSource::SecondPcanUsb)
+        {
+            ImGui::SameLine();
+            ImGui::Text("Kanal:");
+            ImGui::SameLine();
+            int chIdx = (pcanChannel >= PCAN_USBBUS1 && pcanChannel <= PCAN_USBBUS8) ? (pcanChannel - PCAN_USBBUS1) : 1;
+            ImGui::SetNextItemWidth(90.0f);
+            if (ImGui::Combo("##pcan_ch_quick", &chIdx, "USB 1\0USB 2\0USB 3\0USB 4\0\0"))
+            {
+                set_pcan_channel(static_cast<TPCANHandle>(PCAN_USBBUS1 + chIdx));
+            }
+
+            ImGui::SameLine();
+            ImGui::Text("Baud:");
+            ImGui::SameLine();
+            int baudChoice = (pcanBaud == PCAN_BAUD_500K) ? 1 : ((pcanBaud == PCAN_BAUD_125K) ? 2 : 0);
+            ImGui::SetNextItemWidth(100.0f);
+            if (ImGui::Combo("##baud_quick", &baudChoice, "250 kbps\0500 kbps\0125 kbps\0\0"))
+            {
+                TPCANBaudrate b = (baudChoice == 1) ? PCAN_BAUD_500K : ((baudChoice == 2) ? PCAN_BAUD_125K : PCAN_BAUD_250K);
+                set_pcan_baudrate(b);
+            }
+
+            ImGui::SameLine();
+            if (is_auto_detecting())
+            {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.45f, 0.1f, 1.0f));
+                if (ImGui::Button("Skanowanie... (Zatrzymaj)"))
+                {
+                    stop_auto_detect();
+                }
+                ImGui::PopStyleColor();
+            }
+            else
+            {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.58f, 0.95f, 1.0f));
+                if (ImGui::Button("🔍 Auto-Wykryj Baudrate & Ciagnik"))
+                {
+                    start_auto_detect();
+                }
+                ImGui::PopStyleColor();
+            }
+
+            if (!autoDetectResultText.empty())
+            {
+                if (autoDetectState == AutoDetectState::Scanning)
+                {
+                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f), "⏳ %s", autoDetectResultText.c_str());
+                }
+                else if (autoDetectState == AutoDetectState::Success)
+                {
+                    ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "✅ %s", autoDetectResultText.c_str());
+                }
+                else if (autoDetectState == AutoDetectState::Failed)
+                {
+                    ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "❌ %s", autoDetectResultText.c_str());
+                }
+            }
+        }
 
         ImGui::Separator();
 
@@ -907,7 +1138,48 @@ namespace isobus_vt
         ImGui::Spacing();
         ImGui::Separator();
 
-        // 4. Dolne sterowanie progami
+        // 4. Wykryte Moduły / Sterowniki Ciągnika (Auto-Sniffer J1939)
+        if (ImGui::CollapsingHeader("Wykryte Sterowniki Ciagnika (Auto-Sniffer ECU)", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            auto ecus = get_discovered_ecus();
+            if (ecus.empty())
+            {
+                ImGui::TextDisabled("Brak wykrytych modulow na szynie ciagnika. Kliknij 'Auto-Wykryj Baudrate' powyzej!");
+            }
+            else
+            {
+                if (ImGui::BeginTable("DiscoveredEcusTable", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
+                {
+                    ImGui::TableSetupColumn("Nazwa Modulu Ciagnika", ImGuiTableColumnFlags_WidthStretch);
+                    ImGui::TableSetupColumn("Adres (SA)", ImGuiTableColumnFlags_WidthFixed, 85.0f);
+                    ImGui::TableSetupColumn("Czestotliwosc", ImGuiTableColumnFlags_WidthFixed, 95.0f);
+                    ImGui::TableSetupColumn("Liczba Ramek", ImGuiTableColumnFlags_WidthFixed, 95.0f);
+                    ImGui::TableHeadersRow();
+
+                    for (const auto &ecu : ecus)
+                    {
+                        ImGui::TableNextRow();
+                        ImGui::TableNextColumn();
+                        ImGui::TextColored(ImVec4(0.35f, 0.9f, 1.0f, 1.0f), "%s", ecu.name.c_str());
+
+                        ImGui::TableNextColumn();
+                        ImGui::Text("0x%02X (%u)", ecu.sa, ecu.sa);
+
+                        ImGui::TableNextColumn();
+                        ImGui::Text("%.1f Hz", ecu.frameRateHz);
+
+                        ImGui::TableNextColumn();
+                        ImGui::Text("%u", ecu.frameCount);
+                    }
+                    ImGui::EndTable();
+                }
+            }
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+
+        // 5. Dolne sterowanie progami
         ImGui::AlignTextToFramePadding();
         ImGui::Text("Prog podnosnika (praca ponizej):");
         ImGui::SameLine();

@@ -63,6 +63,24 @@ namespace isobus_vt
         bool isLittleEndian = true;
     };
 
+    struct DiscoveredEcu
+    {
+        std::uint8_t sa = 0;
+        std::string name;
+        std::uint32_t frameCount = 0;
+        std::uint32_t lastSeenMs = 0;
+        float frameRateHz = 0.0f;
+        std::vector<std::uint32_t> observedPgns;
+    };
+
+    enum class AutoDetectState : std::uint8_t
+    {
+        Idle = 0,
+        Scanning,
+        Success,
+        Failed
+    };
+
     struct SniffedCanFrame
     {
         std::uint32_t pgn = 0;
@@ -174,9 +192,16 @@ namespace isobus_vt
         void render_tractor_dashboard(bool *p_open);
         void render_pgn_config_dialog(bool *p_open);
 
-        // Sniffer
+        // Sniffer & Auto-Baud
         std::vector<SniffedCanFrame> get_sniffed_frames();
         void clear_sniffer();
+        void start_auto_detect();
+        void stop_auto_detect();
+        bool is_auto_detecting() const;
+        AutoDetectState get_auto_detect_state() const { return autoDetectState; }
+        std::string get_auto_detect_result() const { return autoDetectResultText; }
+        std::vector<DiscoveredEcu> get_discovered_ecus();
+        static std::string get_ecu_name(std::uint8_t sa);
 
     private:
         TractorEcuManager();
@@ -219,6 +244,14 @@ namespace isobus_vt
 
         TractorLiveTelemetry telemetry;
         std::map<std::uint32_t, SniffedCanFrame> sniffedFrames;
+        std::map<std::uint8_t, DiscoveredEcu> discoveredEcus;
+
+        void update_auto_detect();
+        AutoDetectState autoDetectState = AutoDetectState::Idle;
+        std::string autoDetectResultText;
+        int currentScanBaudIdx = 0;
+        std::uint32_t scanStartTimeMs = 0;
+        std::uint32_t scanFrameCount = 0;
 
         // Zmienne symulacji
         float simHitch = 10.0f;

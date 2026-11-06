@@ -146,6 +146,15 @@ namespace isobus_vt
                 else if (key == "aog_subnet") config.aogSubnet = val;
                 else if (key == "auto_sections") config.autoBoomSections = (std::stoi(val) != 0);
 
+                // [Tractor CAN 2]
+                else if (key == "tractor_pcan_channel") config.tractorPcanChannel = std::stoi(val);
+                else if (key == "tractor_can_baud") config.tractorCanBaud = std::stoi(val);
+                else if (key == "tractor_can_source") config.tractorCanSource = std::stoi(val);
+
+                // [WebVT]
+                else if (key == "web_vt_enabled") config.webVtEnabled = (std::stoi(val) != 0);
+                else if (key == "web_vt_port") config.webVtPort = std::stoi(val);
+
                 // [Layout]
                 else if (key == "split_ratio") config.splitRatio = std::max(0.15f, std::min(0.85f, std::stof(val)));
                 else if (key == "active_tab") config.activeRightTab = std::max(0, std::min(5, std::stoi(val)));
@@ -240,6 +249,15 @@ namespace isobus_vt
             out << "aog_tx_port=" << config.aogTxPort << "\n";
             out << "aog_subnet=" << config.aogSubnet << "\n";
             out << "auto_sections=" << (config.autoBoomSections ? 1 : 0) << "\n\n";
+
+            out << "[TractorCAN]\n";
+            out << "tractor_pcan_channel=" << config.tractorPcanChannel << "\n";
+            out << "tractor_can_baud=" << config.tractorCanBaud << "\n";
+            out << "tractor_can_source=" << config.tractorCanSource << "\n\n";
+
+            out << "[WebVT]\n";
+            out << "web_vt_enabled=" << (config.webVtEnabled ? 1 : 0) << "\n";
+            out << "web_vt_port=" << config.webVtPort << "\n\n";
 
             out << "[Layout]\n";
             out << "split_ratio=" << config.splitRatio << "\n";
