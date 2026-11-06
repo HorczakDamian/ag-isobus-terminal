@@ -71,3 +71,23 @@ isobus_file_server/
 
 !object_pool_cache/
 !object_pool_cache/**
+
+# Temporary research dumps and scratch scripts
+/scratch_*.py
+/find_*.py
+/check_*.py
+/read_*.py
+/zoom_*.py
+/search_*.py
+/connector_crop.jpg
+/svgs/
+/*_analysis.txt
+/*_summary.txt
+/connectors_*.txt
+/deutz_can_findings.txt
+/diag_*.txt
+/parsed_*.txt
+/r001_info.txt
+/side_console_harness.txt
+/svg_extracted_texts.txt
+/tables_overview.txt

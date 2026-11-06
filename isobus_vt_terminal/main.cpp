@@ -24,7 +24,8 @@
 #include "IsobusFileServer.hpp"
 #include "DdiExplorerManager.hpp"
 #include "ObjectPoolInspector.hpp"
-#include "AefPoolLinter.hpp" 
+#include "AefPoolLinter.hpp"
+#include "AmazoneBridge.hpp" 
 
 #include "isobus/isobus/can_network_manager.hpp"
 #include "isobus/isobus/can_stack_logger.hpp"
@@ -316,7 +317,8 @@ enum class CockpitScreen {
     TaskController = 1,
     TractorEcu = 2,
     AuxJoystick = 3,
-    IsobusTools = 4
+    IsobusTools = 4,
+    AmazoneCan = 5
 };
 
 static CockpitScreen g_activeCockpitScreen = CockpitScreen::TerminalVT;
@@ -498,6 +500,11 @@ static void RenderCockpitSideStrip(
     if (ImGui::Button(" Otworz diagnostyke CAN ", ImVec2(width - 24.0f, 28.0f)))
     {
         g_activeCockpitScreen = CockpitScreen::IsobusTools;
+        isobus_vt::TerminalSettings::get_instance().play_touch_beep();
+    }
+    if (ImGui::Button(" Otworz sekcje Amazone CAN ", ImVec2(width - 24.0f, 28.0f)))
+    {
+        g_activeCockpitScreen = CockpitScreen::AmazoneCan;
         isobus_vt::TerminalSettings::get_instance().play_touch_beep();
     }
 
@@ -696,11 +703,13 @@ static void RenderCockpitBottomDock(HWND hwnd, float vpW, float vpH)
         ImGui::PopStyleColor(3);
     };
 
-    float btnW = std::max(140.0f, std::min(220.0f, (vpW - 320.0f) / 5.0f));
+    float btnW = std::max(110.0f, std::min(185.0f, (vpW - 320.0f) / 6.0f));
 
     renderNavBtn(" TERMINAL VT ", CockpitScreen::TerminalVT, btnW);
     ImGui::SameLine();
-    renderNavBtn(" TASK CONTROLLER & SOR ", CockpitScreen::TaskController, btnW);
+    renderNavBtn(" TASK CONTROLLER ", CockpitScreen::TaskController, btnW);
+    ImGui::SameLine();
+    renderNavBtn(" AMAZONE CAN (9 SEK) ", CockpitScreen::AmazoneCan, btnW);
     ImGui::SameLine();
     renderNavBtn(" CIAGNIK (TECU) ", CockpitScreen::TractorEcu, btnW);
     ImGui::SameLine();
@@ -832,6 +841,12 @@ static void RenderCockpitIsobusTools(
         if (ImGui::BeginTabItem(" Serwer Plikow (ISO 11783-13) "))
         {
             isobus_vt::IsobusFileServer::get_instance().render_file_server_window(nullptr);
+            ImGui::EndTabItem();
+        }
+
+        if (ImGui::BeginTabItem(" Amazone CAN Sekcje (Amatron) "))
+        {
+            isobus_vt::AmazoneBridge::get_instance().render_embedded();
             ImGui::EndTabItem();
         }
 
@@ -1039,6 +1054,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 
     // Subsystems enable states
     isobus_vt::IsobusFileServer::get_instance().set_enabled(cfg.fileServerEnabled);
+    isobus_vt::AmazoneBridge::get_instance().set_enabled(cfg.amazoneBridgeEnabled);
     isobus_vt::DdiExplorerManager::get_instance().set_enabled(cfg.ddiExplorerEnabled);
     isobus_vt::TractorEcuManager::get_instance().set_enabled(cfg.tecuEnabled);
     if (cfg.tecuEnabled)
@@ -1059,6 +1075,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
     bool showDdiExplorerWindow = false;
     bool showPoolInspectorWindow = false;
     bool showAefLinterWindow = false;
+    bool showAmazoneWindow = cfg.showAmazoneWindow && cfg.amazoneBridgeEnabled;
     static bool g_TriggerResetLayout = false;
     bool alarmSoundMuted = cfg.alarmSoundMuted;
     float uiTouchScale = cfg.uiTouchScale;
@@ -1106,6 +1123,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
             tcManager->update();
         if (cfg.fileServerEnabled)
             isobus_vt::IsobusFileServer::get_instance().update();
+        if (isobus_vt::AmazoneBridge::get_instance().is_enabled())
+            isobus_vt::AmazoneBridge::get_instance().update();
         if (cfg.tecuEnabled)
             isobus_vt::TractorEcuManager::get_instance().update();
 
@@ -1251,6 +1270,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
                         showFileServerWindow = true;
                         g_activeCockpitScreen = CockpitScreen::IsobusTools;
                         break;
+                    case 10: // Amazone CAN Section Control
+                        showAmazoneWindow = true;
+                        g_activeCockpitScreen = CockpitScreen::AmazoneCan;
+                        break;
                     case 0:
                     default:
                         g_activeCockpitScreen = CockpitScreen::TerminalVT;
@@ -1274,6 +1297,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
                     case 7: ImGui::SetWindowFocus("Live Object Pool Tree Browser & Inspector###PoolInspector"); break;
                     case 8: ImGui::SetWindowFocus("AEF Object Pool Linter & Conformance Checker###AefLinter"); break;
                     case 9: ImGui::SetWindowFocus("ISOBUS File Server (ISO 11783-13)###FileServer"); break;
+                    case 10: ImGui::SetWindowFocus("Amazone CAN Section Control (Non-ISOBUS Amatron)###AmazoneBridgeWin"); break;
                     default: break;
                 }
             }
@@ -1471,6 +1495,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
                 ImGui::Separator();
                 ImGui::MenuItem("Telemetria Ciagnika (TUZ / WOM / Silnik)", nullptr, &showTractorWindow);
                 ImGui::MenuItem("Konfiguracja PGN Ciagnika (2. PCAN)", nullptr, &showTractorPgnConfig);
+                ImGui::Separator();
+                ImGui::MenuItem("Amazone CAN Section Control (Amatron)", nullptr, &showAmazoneWindow);
                 ImGui::EndMenu();
             }
 
@@ -1481,6 +1507,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
                 ImGui::MenuItem("DDI Process Data Explorer (ISO 11783-11)", nullptr, &showDdiExplorerWindow);
                 ImGui::MenuItem("Live Object Pool Tree Browser & Inspector", nullptr, &showPoolInspectorWindow);
                 ImGui::MenuItem("AEF Object Pool Linter & Conformance Checker", nullptr, &showAefLinterWindow);
+                ImGui::Separator();
+                ImGui::MenuItem("Amazone CAN Section Control (Non-ISOBUS)", nullptr, &showAmazoneWindow);
                 ImGui::EndMenu();
             }
 
@@ -1501,6 +1529,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
                     c.showAogTcWindow = showAogTcWindow;
                     c.showDiagnosticsWindow = showDiagnosticsWindow;
                     c.showMiniViewsWindow = showMiniViewsWindow;
+                    c.showAmazoneWindow = showAmazoneWindow;
                     c.hudModeEnabled = g_isHudMode;
                     c.isDayMode = isDayMode;
                     c.alarmSoundMuted = alarmSoundMuted;
@@ -3098,6 +3127,23 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
         if (showAefLinterWindow && !g_isHudMode)
         {
             isobus_vt::AefPoolLinter::get_instance().render_linter_window(&showAefLinterWindow);
+        }
+        bool renderAmazone = isCockpit ? (g_activeCockpitScreen == CockpitScreen::AmazoneCan) : (showAmazoneWindow && !g_isHudMode);
+        if (renderAmazone)
+        {
+            if (isCockpit)
+            {
+                ImGui::SetNextWindowPos(ImVec2(4.0f, 48.0f), ImGuiCond_Always);
+                ImGui::SetNextWindowSize(ImVec2(vpW - 8.0f, vpH - 104.0f), ImGuiCond_Always);
+                ImGui::Begin("Amazone CAN Cockpit View###AmazoneCockpit", nullptr, 
+                    ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
+                isobus_vt::AmazoneBridge::get_instance().render_embedded();
+                ImGui::End();
+            }
+            else
+            {
+                isobus_vt::AmazoneBridge::get_instance().render_window(&showAmazoneWindow);
+            }
         }
 
             if (g_TriggerResetLayout)

@@ -75,6 +75,8 @@ set(VT_TERMINAL_SOURCES
   "ObjectPoolInspector.cpp"
   "AefPoolLinter.hpp"
   "AefPoolLinter.cpp" 
+  "AmazoneBridge.hpp"
+  "AmazoneBridge.cpp"
   "main.cpp"
   ${IMGUI_SOURCES}
 )

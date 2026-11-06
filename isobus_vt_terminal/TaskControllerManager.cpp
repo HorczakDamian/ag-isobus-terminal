@@ -5,6 +5,7 @@
 #include <ws2tcpip.h>
 
 #include "TaskControllerManager.hpp"
+#include "AmazoneBridge.hpp"
 #include "DdiExplorerManager.hpp"
 #include "FieldNavigation.hpp"
 #include "TcBasReportManager.hpp"
@@ -1222,11 +1223,13 @@ static void safe_update_tc(isobus::TaskControllerServer* tc)
         udpBridge->onSectionStatesReceived = [this](const std::vector<bool> &states) {
             if (tcServer)
                 tcServer->update_section_setpoints(states);
+            AmazoneBridge::get_instance().on_aog_section_states(states);
         };
 
         udpBridge->onSectionControlModeReceived = [this](bool autoMode) {
             if (tcServer)
                 tcServer->update_section_control_enabled(autoMode);
+            AmazoneBridge::get_instance().on_aog_mode_received(autoMode);
             log_message(std::string("Section Control Mode: ") + (autoMode ? "AUTO" : "MANUAL"));
         };
 
@@ -1243,6 +1246,7 @@ static void safe_update_tc(isobus::TaskControllerServer* tc)
                 speedMessagesInterface->wheelBasedSpeedTransmitData.set_machine_speed(speed);
                 speedMessagesInterface->machineSelectedSpeedTransmitData.set_machine_speed(speed);
             }
+            AmazoneBridge::get_instance().on_aog_speed_received(speedKph);
             if (onSpeedChanged)
             {
                 onSpeedChanged(speedKph);

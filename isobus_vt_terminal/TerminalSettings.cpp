@@ -138,6 +138,7 @@ namespace isobus_vt
                 else if (key == "aux_enabled") config.auxEnabled = (std::stoi(val) != 0);
                 else if (key == "ddi_explorer_enabled") config.ddiExplorerEnabled = (std::stoi(val) != 0);
                 else if (key == "mini_views_enabled") config.miniViewsEnabled = (std::stoi(val) != 0);
+                else if (key == "amazone_bridge_enabled") config.amazoneBridgeEnabled = (std::stoi(val) != 0);
                 else if (key == "startup_window") config.startupWindow = std::max(0, std::min(9, std::stoi(val)));
                 else if (key == "tc_startup_tab") config.tcStartupTab = std::max(0, std::min(5, std::stoi(val)));
                 else if (key == "aog_rx_port") config.aogRxPort = std::stoi(val);
@@ -156,6 +157,7 @@ namespace isobus_vt
                 else if (key == "show_ws_inspector") config.showWsInspector = (std::stoi(val) != 0);
                 else if (key == "show_diagnostics") config.showDiagnosticsWindow = (std::stoi(val) != 0);
                 else if (key == "show_mini_views") config.showMiniViewsWindow = (std::stoi(val) != 0);
+                else if (key == "show_amazone") config.showAmazoneWindow = (std::stoi(val) != 0);
 
                 // [HUD Overlay]
                 else if (key == "cockpit_mode") config.cockpitMode = (std::stoi(val) != 0);
@@ -229,7 +231,8 @@ namespace isobus_vt
             out << "file_server_enabled=" << (config.fileServerEnabled ? 1 : 0) << "\n";
             out << "aux_enabled=" << (config.auxEnabled ? 1 : 0) << "\n";
             out << "ddi_explorer_enabled=" << (config.ddiExplorerEnabled ? 1 : 0) << "\n";
-            out << "mini_views_enabled=" << (config.miniViewsEnabled ? 1 : 0) << "\n\n";
+            out << "mini_views_enabled=" << (config.miniViewsEnabled ? 1 : 0) << "\n";
+            out << "amazone_bridge_enabled=" << (config.amazoneBridgeEnabled ? 1 : 0) << "\n\n";
 
             out << "[TaskController]\n";
             out << "tc_enabled=" << (config.tcEnabled ? 1 : 0) << "\n";
@@ -248,7 +251,8 @@ namespace isobus_vt
             out << "show_can_log=" << (config.showCanLogWindow ? 1 : 0) << "\n";
             out << "show_ws_inspector=" << (config.showWsInspector ? 1 : 0) << "\n";
             out << "show_diagnostics=" << (config.showDiagnosticsWindow ? 1 : 0) << "\n";
-            out << "show_mini_views=" << (config.showMiniViewsWindow ? 1 : 0) << "\n\n";
+            out << "show_mini_views=" << (config.showMiniViewsWindow ? 1 : 0) << "\n";
+            out << "show_amazone=" << (config.showAmazoneWindow ? 1 : 0) << "\n\n";
 
             out << "[HUD]\n";
             out << "cockpit_mode=" << (config.cockpitMode ? 1 : 0) << "\n";

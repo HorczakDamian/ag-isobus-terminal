@@ -54,6 +54,7 @@ namespace isobus_vt
         bool auxEnabled = true;             // AUX-N Joystick & Inputs (ISO 11783-6)
         bool ddiExplorerEnabled = true;     // DDI Process Data Explorer (ISO 11783-11)
         bool miniViewsEnabled = true;       // Multi-Working Set Mini-Views (Podgląd w tle)
+        bool amazoneBridgeEnabled = true;   // Amazone CAN Section Control Bridge (Amatron non-ISOBUS)
         int aogRxPort = 8888;               // UDP Port listening from AgOpenGPS/AGIO
         int aogTxPort = 9999;               // UDP Port broadcasting to AgOpenGPS
         std::string aogSubnet = "192.168.5";// Subnet for UDP broadcast
@@ -66,6 +67,7 @@ namespace isobus_vt
         bool showWsInspector = true;
         bool showDiagnosticsWindow = false;
         bool showMiniViewsWindow = true;    // Podgląd maszyn w tle (Multi-Working Set Mini-Views)
+        bool showAmazoneWindow = false;     // Amazone CAN Section Control (Amatron)
 
         // ── Dockable HUD Overlay na AgOpenGPS ──
         bool cockpitMode = true;        // Tryb Kabinowy (Prawdziwy Terminal ISOBUS)

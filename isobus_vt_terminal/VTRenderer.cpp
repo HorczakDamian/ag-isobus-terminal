@@ -18,7 +18,8 @@
 #include "TaskControllerManager.hpp"
 #include "TractorEcuManager.hpp"
 #include "IsobusFileServer.hpp"
-#include "DdiExplorerManager.hpp" 
+#include "DdiExplorerManager.hpp"
+#include "AmazoneBridge.hpp" 
 #include "isobus/isobus/isobus_virtual_terminal_objects.hpp"
 #include "isobus/isobus/can_network_manager.hpp"
 
@@ -2670,11 +2671,12 @@ namespace isobus_vt
                             "6: DDI Process Data Explorer (ISO 11783-11)",
                             "7: Live Object Pool Tree Browser & Inspector",
                             "8: AEF Object Pool Linter & Conformance Checker",
-                            "9: ISOBUS File Server (ISO 11783-13)"
+                            "9: ISOBUS File Server (ISO 11783-13)",
+                            "10: Amazone CAN Section Control (Non-ISOBUS Amatron)"
                         };
 
                         ImGui::SetNextItemWidth(450.0f);
-                        ImGui::Combo("Glowne okno po starcie aplikacji", &cfg.startupWindow, startupWindowOptions, 10);
+                        ImGui::Combo("Glowne okno po starcie aplikacji", &cfg.startupWindow, startupWindowOptions, 11);
                         ImGui::TextDisabled("Wskazowka: Wybrane okno zostanie natychmiast otwarte i wysuniete na wierzch po zaladowaniu systemu.");
 
                         if (cfg.startupWindow == 1)
@@ -2775,6 +2777,18 @@ namespace isobus_vt
                         ImGui::Checkbox("Wlacz Podglad Maszyn w Tle (Multi-Working Set Mini-Views)", &cfg.miniViewsEnabled);
                         ImGui::Indent();
                         ImGui::TextDisabled("Rownolegle kafelki podgladu dla wielu podlaczonych implementow ISOBUS.");
+                        ImGui::Unindent();
+                        ImGui::Spacing();
+
+                        // 7. Amazone CAN Section Control Bridge
+                        if (ImGui::Checkbox("Wlacz Mostek CAN Amazone (Amatron Section Control)", &cfg.amazoneBridgeEnabled))
+                        {
+                            AmazoneBridge::get_instance().set_enabled(cfg.amazoneBridgeEnabled);
+                        }
+                        ImGui::Indent();
+                        ImGui::TextDisabled("Emulacja skrzynki AmaClick dla opryskiwaczy bez ISOBUS (UF, UG, UX) po magistrali CAN (250 kbps).");
+                        if (!cfg.amazoneBridgeEnabled)
+                            ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.2f, 1.0f), "  [Status: Wylaczony - ramki AmaClick nie sa wysylane na CAN]");
                         ImGui::Unindent();
 
                         ImGui::EndTabItem();

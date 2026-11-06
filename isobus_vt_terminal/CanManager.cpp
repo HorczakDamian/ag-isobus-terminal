@@ -10,6 +10,8 @@
 #include <algorithm>
 #include <iomanip>
 #include <sstream>
+#include <fstream>
+#include <chrono>
 
 namespace isobus_vt
 {
@@ -375,6 +377,34 @@ namespace isobus_vt
             isobus::CANStackLogger::info(buf);
         }
 
+        // Continuous logging to can_traffic.log
+        {
+            char hexData[32] = {0};
+            for (std::uint8_t i = 0; i < frame.dataLength && i < 8; ++i)
+            {
+                snprintf(hexData + (i * 3), 4, "%02X ", frame.data[i]);
+            }
+            std::string annotation;
+            if (frame.identifier == 0x18E6FFCE)
+            {
+                bool master = (frame.data[3] & 0x80) != 0;
+                annotation = " | [AMAZONE AMACLICK RX] Master:" + std::string(master ? "ON" : "OFF") + " Sekcje:";
+                for (int s = 0; s < 8; ++s) if (frame.data[2] & (1 << s)) annotation += " S" + std::to_string(s + 1);
+                if (frame.data[3] & 0x01) annotation += " S9";
+            }
+            else if (frame.identifier == 0x18EEFFCE)
+            {
+                annotation = " | [AMAZONE CLAIM RX] Adres 0xCE";
+            }
+
+            char logLine[256];
+            snprintf(logLine, sizeof(logLine), "[RX] ID: 0x%08X [DLC %u] DATA: %-24s PGN: 0x%05X SA: 0x%02X DA: 0x%02X%s",
+                     frame.identifier, frame.dataLength, hexData,
+                     id.get_parameter_group_number(), id.get_source_address(), id.get_destination_address(),
+                     annotation.c_str());
+            write_file_log(logLine);
+        }
+
         if (logPaused)
             return;
 
@@ -413,6 +443,34 @@ namespace isobus_vt
                      frame.identifier, id.get_parameter_group_number(), id.get_destination_address(), frame.dataLength,
                      frame.data[0], frame.data[1], frame.data[2], frame.data[3], frame.data[4], frame.data[5], frame.data[6], frame.data[7]);
             isobus::CANStackLogger::info(buf);
+        }
+
+        // Continuous logging to can_traffic.log
+        {
+            char hexData[32] = {0};
+            for (std::uint8_t i = 0; i < frame.dataLength && i < 8; ++i)
+            {
+                snprintf(hexData + (i * 3), 4, "%02X ", frame.data[i]);
+            }
+            std::string annotation;
+            if (frame.identifier == 0x18E6FFCE)
+            {
+                bool master = (frame.data[3] & 0x80) != 0;
+                annotation = " | [AMAZONE AMACLICK TX] Master:" + std::string(master ? "ON" : "OFF") + " Sekcje:";
+                for (int s = 0; s < 8; ++s) if (frame.data[2] & (1 << s)) annotation += " S" + std::to_string(s + 1);
+                if (frame.data[3] & 0x01) annotation += " S9";
+            }
+            else if (frame.identifier == 0x18EEFFCE)
+            {
+                annotation = " | [AMAZONE CLAIM TX] Adres 0xCE zgloszony do magistrali";
+            }
+
+            char logLine[256];
+            snprintf(logLine, sizeof(logLine), "[TX] ID: 0x%08X [DLC %u] DATA: %-24s PGN: 0x%05X SA: 0x%02X DA: 0x%02X%s",
+                     frame.identifier, frame.dataLength, hexData,
+                     id.get_parameter_group_number(), id.get_source_address(), id.get_destination_address(),
+                     annotation.c_str());
+            write_file_log(logLine);
         }
 
         if (logPaused)
@@ -462,6 +520,67 @@ namespace isobus_vt
                 ss << "PGN 0x" << std::hex << std::uppercase << pgn;
                 return ss.str();
             }
+        }
+    }
+
+    std::string CanManager::get_file_log_path()
+    {
+        return "can_traffic.log";
+    }
+
+    void CanManager::init_file_log()
+    {
+        if (!fileLogStream.is_open())
+        {
+            fileLogStream.open(get_file_log_path(), std::ios::out | std::ios::app);
+            if (fileLogStream.is_open())
+            {
+                fileLogStream << "\n======================================================================\n";
+                fileLogStream << "=== CAN TRAFFIC LOG SESSION INITIALIZED (PEAK PCAN 250 kbps) ===\n";
+                fileLogStream << "======================================================================\n";
+                fileLogStream.flush();
+            }
+        }
+    }
+
+    void CanManager::clear_file_log()
+    {
+        std::lock_guard<std::mutex> lock(fileLogMutex);
+        if (fileLogStream.is_open()) fileLogStream.close();
+        fileLogStream.open(get_file_log_path(), std::ios::out | std::ios::trunc);
+        if (fileLogStream.is_open())
+        {
+            fileLogStream << "=== CAN TRAFFIC LOG CLEARED ===\n";
+            fileLogStream.flush();
+        }
+        fileLogLinesWritten = 0;
+    }
+
+    void CanManager::write_file_log(const std::string &line)
+    {
+        std::lock_guard<std::mutex> lock(fileLogMutex);
+        if (!fileLogStream.is_open())
+        {
+            init_file_log();
+        }
+        if (fileLogStream.is_open())
+        {
+            auto now = std::chrono::system_clock::now();
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
+            auto timer = std::chrono::system_clock::to_time_t(now);
+            std::tm bt;
+#ifdef _WIN32
+            localtime_s(&bt, &timer);
+#else
+            localtime_r(&timer, &bt);
+#endif
+            char timeBuf[32];
+            snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d:%02d.%03d",
+                     bt.tm_hour, bt.tm_min, bt.tm_sec, static_cast<int>(ms.count()));
+
+            fileLogStream << "[" << timeBuf << "] " << line << "\n";
+            fileLogStream.flush();
+            fileLogLinesWritten++;
         }
     }
 }

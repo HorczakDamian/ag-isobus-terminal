@@ -11,6 +11,7 @@
 #include <mutex>
 #include <string>
 #include <vector>
+#include <fstream>
 
 namespace isobus_vt
 {
@@ -89,7 +90,18 @@ namespace isobus_vt
         void set_log_paused(bool paused);
         bool is_log_paused() const;
 
+        // Continuous File Logging (can_traffic.log)
+        void write_file_log(const std::string &line);
+        void clear_file_log();
+        static std::string get_file_log_path();
+        std::uint64_t get_file_log_lines_count() const { return fileLogLinesWritten; }
+
     private:
+        std::atomic<std::uint64_t> fileLogLinesWritten{0};
+        std::mutex fileLogMutex;
+        std::ofstream fileLogStream;
+        void init_file_log();
+
         CanDriverType currentDriverType = CanDriverType::PeakPcan;
         int currentPcanChannel = PCAN_USBBUS1;
 
