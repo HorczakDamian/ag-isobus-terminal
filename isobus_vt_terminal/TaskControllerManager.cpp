@@ -5,6 +5,7 @@
 #include <ws2tcpip.h>
 
 #include "TaskControllerManager.hpp"
+#include "TerminalSettings.hpp"
 #include "AmazoneBridge.hpp"
 #include "DdiExplorerManager.hpp"
 #include "FieldNavigation.hpp"
@@ -550,30 +551,39 @@ static void safe_update_tc(isobus::TaskControllerServer* tc)
             }
         }
 
-        // Detect local subnet (e.g. 192.168.68.x)
-        char host[256];
-        if (gethostname(host, sizeof(host)) == 0)
+        // 1. Initialize from configured aogSubnet in TerminalSettings
+        const auto &cfg = TerminalSettings::get_instance().get_config();
+        if (!cfg.aogSubnet.empty())
         {
-            addrinfo hints{}, *res = nullptr;
-            hints.ai_family = AF_INET;
-            if (getaddrinfo(host, nullptr, &hints, &res) == 0 && res != nullptr)
+            set_subnet_from_string(cfg.aogSubnet);
+        }
+        else
+        {
+            // Fallback auto-detect local subnet if not configured
+            char host[256];
+            if (gethostname(host, sizeof(host)) == 0)
             {
-                for (addrinfo *p = res; p != nullptr; p = p->ai_next)
+                addrinfo hints{}, *res = nullptr;
+                hints.ai_family = AF_INET;
+                if (getaddrinfo(host, nullptr, &hints, &res) == 0 && res != nullptr)
                 {
-                    auto sin = reinterpret_cast<sockaddr_in*>(p->ai_addr);
-                    std::uint32_t ip = ntohl(sin->sin_addr.s_addr);
-                    std::uint8_t o1 = static_cast<std::uint8_t>((ip >> 24) & 0xFF);
-                    std::uint8_t o2 = static_cast<std::uint8_t>((ip >> 16) & 0xFF);
-                    std::uint8_t o3 = static_cast<std::uint8_t>((ip >> 8) & 0xFF);
-                    if (o1 == 192 && o2 == 168)
+                    for (addrinfo *p = res; p != nullptr; p = p->ai_next)
                     {
-                        subnet[0] = o1;
-                        subnet[1] = o2;
-                        subnet[2] = o3;
-                        break;
+                        auto sin = reinterpret_cast<sockaddr_in*>(p->ai_addr);
+                        std::uint32_t ip = ntohl(sin->sin_addr.s_addr);
+                        std::uint8_t o1 = static_cast<std::uint8_t>((ip >> 24) & 0xFF);
+                        std::uint8_t o2 = static_cast<std::uint8_t>((ip >> 16) & 0xFF);
+                        std::uint8_t o3 = static_cast<std::uint8_t>((ip >> 8) & 0xFF);
+                        if (o1 == 192 && o2 == 168)
+                        {
+                            subnet[0] = o1;
+                            subnet[1] = o2;
+                            subnet[2] = o3;
+                            break;
+                        }
                     }
+                    freeaddrinfo(res);
                 }
-                freeaddrinfo(res);
             }
         }
 
@@ -903,7 +913,7 @@ static void safe_update_tc(isobus::TaskControllerServer* tc)
         sendto(s, reinterpret_cast<const char*>(txBuf), static_cast<int>(idx), 0,
                reinterpret_cast<sockaddr*>(&bcastAny), sizeof(bcastAny));
 
-        // 4. Send to LAN broadcast <subnet>.255:9999
+        // 4. Send to LAN broadcast <subnet>.255:9999 (configured in settings)
         sockaddr_in bcastAddr{};
         bcastAddr.sin_family = AF_INET;
         bcastAddr.sin_port = htons(txPort);
@@ -911,6 +921,36 @@ static void safe_update_tc(isobus::TaskControllerServer* tc)
         inet_pton(AF_INET, bcastIp.c_str(), &bcastAddr.sin_addr);
         sendto(s, reinterpret_cast<const char*>(txBuf), static_cast<int>(idx), 0,
                reinterpret_cast<sockaddr*>(&bcastAddr), sizeof(bcastAddr));
+
+        // 5. Also send to other active network adapter subnets (e.g. 192.168.68.255)
+        char host[256];
+        if (gethostname(host, sizeof(host)) == 0)
+        {
+            addrinfo hints{}, *res = nullptr;
+            hints.ai_family = AF_INET;
+            if (getaddrinfo(host, nullptr, &hints, &res) == 0 && res != nullptr)
+            {
+                for (addrinfo *p = res; p != nullptr; p = p->ai_next)
+                {
+                    auto sin = reinterpret_cast<sockaddr_in*>(p->ai_addr);
+                    std::uint32_t ip = ntohl(sin->sin_addr.s_addr);
+                    std::uint8_t o1 = static_cast<std::uint8_t>((ip >> 24) & 0xFF);
+                    std::uint8_t o2 = static_cast<std::uint8_t>((ip >> 16) & 0xFF);
+                    std::uint8_t o3 = static_cast<std::uint8_t>((ip >> 8) & 0xFF);
+                    if (o1 != 127 && (o1 != subnet[0] || o2 != subnet[1] || o3 != subnet[2]))
+                    {
+                        sockaddr_in extraBcast{};
+                        extraBcast.sin_family = AF_INET;
+                        extraBcast.sin_port = htons(txPort);
+                        std::string extraIp = std::to_string(o1) + "." + std::to_string(o2) + "." + std::to_string(o3) + ".255";
+                        inet_pton(AF_INET, extraIp.c_str(), &extraBcast.sin_addr);
+                        sendto(s, reinterpret_cast<const char*>(txBuf), static_cast<int>(idx), 0,
+                               reinterpret_cast<sockaddr*>(&extraBcast), sizeof(extraBcast));
+                    }
+                }
+                freeaddrinfo(res);
+            }
+        }
 
         txPackets++;
     }
@@ -1065,6 +1105,37 @@ static void safe_update_tc(isobus::TaskControllerServer* tc)
     std::string AogUdpBridge::get_subnet_string() const
     {
         return std::to_string(subnet[0]) + "." + std::to_string(subnet[1]) + "." + std::to_string(subnet[2]) + ".x";
+    }
+
+    void AogUdpBridge::set_subnet(std::uint8_t o1, std::uint8_t o2, std::uint8_t o3)
+    {
+        subnet[0] = o1;
+        subnet[1] = o2;
+        subnet[2] = o3;
+    }
+
+    void AogUdpBridge::set_subnet_from_string(const std::string &subnetStr)
+    {
+        std::stringstream ss(subnetStr);
+        std::string token;
+        std::vector<std::uint8_t> parts;
+        while (std::getline(ss, token, '.'))
+        {
+            if (!token.empty())
+            {
+                try {
+                    int val = std::stoi(token);
+                    if (val >= 0 && val <= 255)
+                        parts.push_back(static_cast<std::uint8_t>(val));
+                } catch (...) {}
+            }
+        }
+        if (parts.size() >= 3)
+        {
+            subnet[0] = parts[0];
+            subnet[1] = parts[1];
+            subnet[2] = parts[2];
+        }
     }
 
     // =========================================================================
@@ -1526,6 +1597,28 @@ static void safe_update_tc(isobus::TaskControllerServer* tc)
     float TaskControllerManager::get_speed_kph() const
     {
         return udpBridge ? udpBridge->get_gps_speed_kph() : 0.0f;
+    }
+
+    void TaskControllerManager::set_aog_subnet(const std::string &subnetStr)
+    {
+        if (udpBridge) udpBridge->set_subnet_from_string(subnetStr);
+    }
+
+    void TaskControllerManager::set_aog_subnet(std::uint8_t o1, std::uint8_t o2, std::uint8_t o3)
+    {
+        if (udpBridge) udpBridge->set_subnet(o1, o2, o3);
+    }
+
+    std::array<std::uint8_t, 3> TaskControllerManager::get_aog_subnet() const
+    {
+        if (udpBridge) return udpBridge->get_subnet();
+        return { 192, 168, 5 };
+    }
+
+    std::string TaskControllerManager::get_aog_subnet_string() const
+    {
+        if (udpBridge) return udpBridge->get_subnet_string();
+        return "192.168.5.x";
     }
 
     bool TaskControllerManager::is_auto_mode() const

@@ -2957,15 +2957,127 @@ namespace isobus_vt
                         ImGui::SetNextItemWidth(140.0f);
                         ImGui::InputInt("Port nadawania sekcji (Tx)##tc", &cfg.aogTxPort);
 
-                        char subnetBuf[32];
-                        strncpy_s(subnetBuf, cfg.aogSubnet.c_str(), sizeof(subnetBuf));
-                        ImGui::SetNextItemWidth(180.0f);
-                        if (ImGui::InputText("Podsiec UDP (np. 192.168.5 lub 127.0.0)", subnetBuf, sizeof(subnetBuf)))
+                        // --- Konfiguracja Podsieci UDP (Wzorowane na AgIO / AgOpenGPS) ---
+                        ImGui::Spacing();
+                        ImGui::TextColored(ImVec4(0.2f, 0.85f, 1.0f, 1.0f), "Podsiec sieciowa UDP (AgIO / AgOpenGPS Ethernet):");
+                        ImGui::Indent();
+
+                        int sub[3] = { 192, 168, 5 };
                         {
-                            cfg.aogSubnet = subnetBuf;
+                            std::stringstream ss(cfg.aogSubnet);
+                            std::string t;
+                            int i = 0;
+                            while (std::getline(ss, t, '.') && i < 3)
+                            {
+                                if (!t.empty()) {
+                                    try { sub[i] = std::clamp(std::stoi(t), 0, 255); } catch (...) {}
+                                }
+                                i++;
+                            }
                         }
+
+                        ImGui::Text("Adres podsieci maszyn:");
                         ImGui::SameLine();
-                        ImGui::TextDisabled("(Rozglaszanie na %s.255)", cfg.aogSubnet.c_str());
+                        ImGui::SetNextItemWidth(60.0f);
+                        bool changed = ImGui::InputInt("##sub0", &sub[0], 0, 0);
+                        ImGui::SameLine(); ImGui::TextUnformatted("."); ImGui::SameLine();
+                        ImGui::SetNextItemWidth(60.0f);
+                        changed |= ImGui::InputInt("##sub1", &sub[1], 0, 0);
+                        ImGui::SameLine(); ImGui::TextUnformatted("."); ImGui::SameLine();
+                        ImGui::SetNextItemWidth(60.0f);
+                        changed |= ImGui::InputInt("##sub2", &sub[2], 0, 0);
+                        ImGui::SameLine();
+                        ImGui::TextDisabled(".255  (Rozglaszanie na: %d.%d.%d.255:%d)", sub[0], sub[1], sub[2], cfg.aogTxPort);
+
+                        for (int i = 0; i < 3; ++i) sub[i] = std::clamp(sub[i], 0, 255);
+
+                        auto applySubnet = [&](int s0, int s1, int s2) {
+                            sub[0] = s0; sub[1] = s1; sub[2] = s2;
+                            cfg.aogSubnet = std::to_string(s0) + "." + std::to_string(s1) + "." + std::to_string(s2);
+                            if (tcManager) tcManager->set_aog_subnet(cfg.aogSubnet);
+                            ts.save();
+                        };
+
+                        if (changed)
+                        {
+                            applySubnet(sub[0], sub[1], sub[2]);
+                        }
+
+                        // Szybkie presety najczesciej uzywanych podsieci w maszynach
+                        ImGui::Text("Szybki wybor podsieci:");
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("192.168.5 (Standard AgIO)")) applySubnet(192, 168, 5);
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("192.168.1")) applySubnet(192, 168, 1);
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("192.168.68")) applySubnet(192, 168, 68);
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("10.0.0")) applySubnet(10, 0, 0);
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("127.0.0 (Lokalna)")) applySubnet(127, 0, 0);
+
+                        // Wykrywanie fizycznych kart sieciowych w komputerze
+                        std::vector<std::pair<std::string, std::string>> detectedAdapters;
+                        char hostName[256];
+                        if (gethostname(hostName, sizeof(hostName)) == 0)
+                        {
+                            addrinfo hints{}, *res = nullptr;
+                            hints.ai_family = AF_INET;
+                            hints.ai_socktype = SOCK_STREAM;
+                            if (getaddrinfo(hostName, nullptr, &hints, &res) == 0 && res != nullptr)
+                            {
+                                for (addrinfo *p = res; p != nullptr; p = p->ai_next)
+                                {
+                                    auto sin = reinterpret_cast<sockaddr_in*>(p->ai_addr);
+                                    char ipBuf[INET_ADDRSTRLEN] = { 0 };
+                                    inet_ntop(AF_INET, &(sin->sin_addr), ipBuf, INET_ADDRSTRLEN);
+                                    std::string ip = ipBuf;
+                                    if (ip != "127.0.0.1")
+                                    {
+                                        size_t lastDot = ip.rfind('.');
+                                        std::string pfx = (lastDot != std::string::npos) ? ip.substr(0, lastDot) : ip;
+                                        detectedAdapters.push_back({ ip, pfx });
+                                    }
+                                }
+                                freeaddrinfo(res);
+                            }
+                        }
+
+                        bool adapterMatched = false;
+                        std::string curSubStr = std::to_string(sub[0]) + "." + std::to_string(sub[1]) + "." + std::to_string(sub[2]);
+                        for (const auto &ad : detectedAdapters)
+                        {
+                            if (ad.second == curSubStr) adapterMatched = true;
+                        }
+
+                        ImGui::Spacing();
+                        if (adapterMatched)
+                        {
+                            ImGui::TextColored(ImVec4(0.2f, 0.95f, 0.4f, 1.0f), "  [OK] Aktywny adapter w podsieci %s zostal znaleziony w systemie.", curSubStr.c_str());
+                        }
+                        else
+                        {
+                            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f), "  [!] W systemie brak karty o adresie %s.x (jak w AgIO: No Adapter For This Subnet).", curSubStr.c_str());
+                            ImGui::TextDisabled("      Jesli laczysz z modulem ciagnika, nadaj karcie sieciowej w Windows staly adres IP np. %s.100", curSubStr.c_str());
+                        }
+
+                        if (!detectedAdapters.empty())
+                        {
+                            ImGui::TextDisabled("Wykryte karty sieciowe w Twoim PC:");
+                            for (size_t aIdx = 0; aIdx < detectedAdapters.size(); ++aIdx)
+                            {
+                                ImGui::BulletText("%s", detectedAdapters[aIdx].first.c_str());
+                                ImGui::SameLine();
+                                std::string btnLabel = "Uzyj podsieci " + detectedAdapters[aIdx].second + "##ad" + std::to_string(aIdx);
+                                if (ImGui::SmallButton(btnLabel.c_str()))
+                                {
+                                    cfg.aogSubnet = detectedAdapters[aIdx].second;
+                                    if (tcManager) tcManager->set_aog_subnet(cfg.aogSubnet);
+                                    ts.save();
+                                }
+                            }
+                        }
+                        ImGui::Unindent();
 
                         if (tcManager)
                         {

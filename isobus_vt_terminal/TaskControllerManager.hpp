@@ -183,6 +183,9 @@ namespace isobus_vt
         float get_gps_speed_kph() const { return gpsSpeedKph.load(); }
         std::uint8_t get_gps_fix_quality() const { return gpsFixQuality.load(); }
         std::string get_subnet_string() const;
+        void set_subnet(std::uint8_t o1, std::uint8_t o2, std::uint8_t o3);
+        void set_subnet_from_string(const std::string &subnetStr);
+        std::array<std::uint8_t, 3> get_subnet() const { return subnet; }
         std::uint32_t get_rx_packets() const { return rxPackets.load(); }
         std::uint32_t get_tx_packets() const { return txPackets.load(); }
 
@@ -233,6 +236,10 @@ namespace isobus_vt
         std::vector<bool> get_section_setpoints() const;
         float get_speed_kph() const;
         bool is_auto_mode() const;
+        void set_aog_subnet(const std::string &subnetStr);
+        void set_aog_subnet(std::uint8_t o1, std::uint8_t o2, std::uint8_t o3);
+        std::array<std::uint8_t, 3> get_aog_subnet() const;
+        std::string get_aog_subnet_string() const;
 
         // Force painting toggle (Manual Override: all sections ON & work switch active)
         void set_force_paint(bool force) { forcePaint = force; }
